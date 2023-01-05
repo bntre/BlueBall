@@ -52,27 +52,31 @@ block_areas = create_image_areas("""
 H0 H1 H2 H3
 H4 H5 H6 H7
    W  F
-L0 L1 L2 L3
-L7 L4 L5 L6
+L0 L2 L1 L3
+L6 L5 L7 L4
 B
 
 
 
 
-R0 R1 R2 R3
+R1 R0 R2 R3
 """)
 
 BLOCK_VISIBLE   = 1
-BLOCK_SOLID     = 2
-BLOCK_OPAQUE    = 4
-BLOCK_BOX_BIT   = 8
+BLOCK_SOLID     = 1<<1
+BLOCK_OPAQUE    = 1<<2
+BLOCK_BOX_BIT   = 1<<3
+CELL_RAY        = 1<<4  # shift 0..3 for  --  |  /  \
+CELL_RAYS       = (CELL_RAY << 0) | (CELL_RAY << 1) | (CELL_RAY << 2) | (CELL_RAY << 3)
 
 BLOCK_BOX       = BLOCK_BOX_BIT | BLOCK_VISIBLE | BLOCK_SOLID | BLOCK_OPAQUE
+
 
 BLOCK_MAP = {    # block name letter => property bits
     "W": BLOCK_VISIBLE | BLOCK_SOLID | BLOCK_OPAQUE,
     "F": BLOCK_VISIBLE,
     "L": BLOCK_VISIBLE | BLOCK_SOLID | BLOCK_OPAQUE,
+    "B": BLOCK_BOX
 }
 
 
@@ -85,7 +89,7 @@ W        H0    W
 W  W  W  W  W  W
 """
 
-KEY_MOVES = {
+KEY_STEPS = {
     pygame.K_LEFT:  (-1, 0),
     pygame.K_RIGHT: (1, 0),
     pygame.K_UP:    (0, -1),
@@ -93,8 +97,10 @@ KEY_MOVES = {
 }
 
 LASER_DIRS = [
-    (1, 0), (0, -1), (-1, 0), (0, 1),   # >  ^  <  v
-    (1, -1), (-1, -1), (-1, 1), (1, 1)  # /` `\ ,/ \,
+    ( 1, 0), (-1, 0),   #  >  <     0  1   >>1  0 --
+    ( 0,-1), ( 0, 1),   #  ^  v     2  3        1  |
+    ( 1,-1), (-1, 1),   #  /` ./    4  5        2  /
+    (-1,-1), ( 1, 1),   #  `\  \,   6  7        3  \
 ]
 
 
@@ -111,13 +117,15 @@ class BlueBallGame:
         w, h = len(blocks[0]), len(blocks)
 
         self.levelSize = (w, h)
-        self.levelBlocks = blocks
+        self.levelBlocks = blocks  # block map loaded from block text
         self.levelSurface = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
 
-        self.heroPos = None
-        self.boxes = []  # list of positions
-        self.lazers = []
         self.level = []  # property bits for each cell
+        self.boxes = []  # list of positions
+        self.lazers = []  # list of (pos, direction)
+        self.heroPos = None
+        self.finishPos = None
+        
         for i in range(h):
             row = []
             for j in range(w):
@@ -125,13 +133,16 @@ class BlueBallGame:
                 name = blocks[i][j]
                 if name:
                     letter = name[0]
-                    if letter == "H":
+                    if letter == "H":       # Hero
                         self.heroPos = (j, i)
-                    elif letter == "B":
+                    elif letter == "F":     # Finish
+                        self.finishPos = (j, i)
+                    elif letter == "B":     # Box
                         self.boxes.append((j, i))
-                        bits = BLOCK_BOX
-                    else:
-                        bits = BLOCK_MAP.get(letter, 0)
+                    elif letter == "L":     # Laser
+                        d = int(name[1])     # direction
+                        self.lazers.append(((j, i), d))
+                    bits = BLOCK_MAP.get(letter, 0)
                 row.append(bits)
             self.level.append(row)
     
@@ -149,7 +160,6 @@ class BlueBallGame:
             dest = (pos[0]*CELLSIZE, pos[1]*CELLSIZE), 
             area = area
         )
-        
     
     def redraw_level(self):
         self.levelSurface.fill('black')
@@ -159,10 +169,13 @@ class BlueBallGame:
          for (j,bits) in enumerate(a):
             if bits:
                 if bits & BLOCK_BOX_BIT:
-                    name = "B"
+                    self.draw_block((j,i), "B")
                 else:
-                    name = self.levelBlocks[i][j]
-                self.draw_block((j,i), name)
+                    name = self.levelBlocks[i][j]  # get block name from level block map
+                    self.draw_block((j,i), name)
+                for ray in range(4):
+                    if bits & (CELL_RAY << ray):
+                        self.draw_block((j,i), "R%d" % ray)
         
         # hero
         self.draw_block(self.heroPos, "H0")
@@ -171,34 +184,75 @@ class BlueBallGame:
         self.windowSurface.blit(pygame.transform.scale(self.levelSurface, (360, 360)), (0, 0))
         pygame.display.update()
     
+    def update_lazers(self):
+        w, h = self.levelSize
+        
+        for i in range(h):
+         for j in range(w):
+            self.level[i][j] &= ~CELL_RAYS;
+        
+        for (pos0,d) in self.lazers:
+            ray = d>>1  # 0..3
+            step = LASER_DIRS[d]
+            pos = pos0
+            while True:
+                pos = (x,y) = add(pos, step)
+                if not self.is_in_level(pos): break
+                if self.level[y][x] & BLOCK_OPAQUE: break
+                self.level[y][x] |= CELL_RAY << ray;
+
+    
     def run_loop(self):
         
         while True:
-        
+            
+            updateLazers = False
+            
             # handle all events
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
                     return
                 elif e.type == pygame.KEYDOWN:
-                    move = KEY_MOVES.get(e.key)
-                    if move:
-                        newPos = (x,y) = add(self.heroPos, move)
-                        #print(move, newPos)
-                        if self.is_in_level(newPos):
-                            bits = self.level[y][x]
-                            if bits & BLOCK_BOX_BIT:  # box. can we move it?
-                                newPos2 = (x2,y2) = add(newPos, move)
-                                if self.is_in_level(newPos2):
-                                    bits2 = self.level[y2][x2]
-                                    if not bits2 & BLOCK_SOLID:  # we can move it
-                                        self.level[y ][x ] &= ~BLOCK_BOX
-                                        self.level[y2][x2] |=  BLOCK_BOX
-                                        self.heroPos = newPos
-                                
-                            elif not bits & BLOCK_SOLID:
-                                self.heroPos = newPos
-
+                    step = KEY_STEPS.get(e.key)  # e.g. (-1,0)
+                    if step:
+                        wasMoved = self.try_to_step(step)
+                        if wasMoved:
+                            updateLazers = True
+            
+            updateLazers = True  # always?
+            if updateLazers:
+                self.update_lazers();
+            
             self.redraw_level()
+
+            x, y = self.heroPos
+            if self.level[y][x] & CELL_RAYS:
+                return
+            
+            if self.heroPos == self.finishPos:
+                return
+
+
+    def try_to_step(self, step):
+        "move is e.g. (-1,0)"
+        newPos = (x,y) = add(self.heroPos, step)
+        #print(step, newPos)
+        if self.is_in_level(newPos):
+            bits = self.level[y][x]
+            if bits & BLOCK_BOX_BIT:  # box. can we move it?
+                newPos2 = (x2,y2) = add(newPos, step)
+                if self.is_in_level(newPos2):
+                    bits2 = self.level[y2][x2]
+                    if not bits2 & BLOCK_SOLID:  # we can move it
+                        self.level[y ][x ] &= ~BLOCK_BOX
+                        self.level[y2][x2] |=  BLOCK_BOX
+                        self.heroPos = newPos
+                        return True
+            elif not bits & BLOCK_SOLID:
+                self.heroPos = newPos
+                return True
+        return False
+    
 
 
 def test():
