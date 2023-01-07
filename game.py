@@ -11,7 +11,7 @@ def mult(p, k):
     return (p[0] * k, p[1] * k)
     
 
-def split_text_to_cells(text, cell_width = 3):
+def split_text_to_cells(text, cell_width = 4):
     "multiline text -> [[cell]]"
     arr = []
     text = text.replace('\r\n', '\n')
@@ -24,7 +24,7 @@ def split_text_to_cells(text, cell_width = 3):
         arr.append(a)
     return arr
 
-def split_text_to_cell_map(text, cell_width = 3):
+def split_text_to_cell_map(text, cell_width = 4):
     "multiline text -> { cell => (i,j) }"
     arr = split_text_to_cells(text, cell_width)
     m = {}
@@ -39,7 +39,7 @@ def split_text_to_cell_map(text, cell_width = 3):
 CELLSIZE = 9
 
 
-def create_image_areas(text, cell_width = 3):
+def create_image_areas(text, cell_width = 4):
     m = split_text_to_cell_map(text, cell_width)
     areas = {}
     for (name,(i,j)) in m.items():
@@ -49,45 +49,99 @@ def create_image_areas(text, cell_width = 3):
 
 
 block_areas = create_image_areas("""
-H0 H1 H2 H3
-H4 H5 H6 H7
-   W  F
-L0 L2 L1 L3
-L6 L5 L7 L4
-B
-
-
-
-
-R1 R0 R2 R3
+H0  H1  H2  H3
+H4  H5  H6  H7
+S   W   F   I
+L0  L2  L1  L3
+L6  L5  L7  L4
+B           
+            
+            
+J2  J1  J3  J0
+J6  J5  J7  J4
+R1  R0  R2  R3
 """)
 
 BLOCK_VISIBLE   = 1
 BLOCK_SOLID     = 1<<1
 BLOCK_OPAQUE    = 1<<2
-BLOCK_BOX_BIT   = 1<<3
-CELL_RAY        = 1<<4  # shift 0..3 for  --  |  /  \
+BLOCK_NEEDS_BG  = 1<<3  # has transparency and needs background
+BLOCK_BOX_BIT   = 1<<4
+CELL_RAY        = 1<<5  # shift 0..3 for  --  |  /  \
 CELL_RAYS       = (CELL_RAY << 0) | (CELL_RAY << 1) | (CELL_RAY << 2) | (CELL_RAY << 3)
 
-BLOCK_BOX       = BLOCK_BOX_BIT | BLOCK_VISIBLE | BLOCK_SOLID | BLOCK_OPAQUE
+BLOCK_WALL      = BLOCK_VISIBLE | BLOCK_SOLID | BLOCK_OPAQUE
+BLOCK_FINISH    = BLOCK_VISIBLE | BLOCK_NEEDS_BG
+BLOCK_ICE       = BLOCK_VISIBLE | BLOCK_SOLID
+BLOCK_LASER     = BLOCK_VISIBLE | BLOCK_SOLID | BLOCK_OPAQUE
+BLOCK_ICELASER  = BLOCK_VISIBLE | BLOCK_SOLID
+BLOCK_BOX       = BLOCK_VISIBLE | BLOCK_SOLID | BLOCK_OPAQUE | BLOCK_BOX_BIT
 
 
 BLOCK_MAP = {    # block name letter => property bits
-    "W": BLOCK_VISIBLE | BLOCK_SOLID | BLOCK_OPAQUE,
-    "F": BLOCK_VISIBLE,
-    "L": BLOCK_VISIBLE | BLOCK_SOLID | BLOCK_OPAQUE,
-    "B": BLOCK_BOX
+    "W": BLOCK_WALL,
+    "F": BLOCK_FINISH,
+    "I": BLOCK_ICE,
+    "L": BLOCK_LASER,
+    "J": BLOCK_ICELASER,
+    "B": BLOCK_BOX,
 }
 
 
-LEVEL1 = """
-W  W  W  W  W  W
-W  F           W
-W  L0          W
-W        B     W
-W        H0    W
-W  W  W  W  W  W
-"""
+LEVELS = [
+{   'name': 1, 
+    'map': """
+W   W   W   W   W   W
+W   F               W
+W   L0              W
+W           B       W
+W           H0      W
+W   W   W   W   W   W
+""" },
+
+{   'name': "temp", 
+    'map': """
+W   W   W   W   W   W   W   W   W   W   W
+W   F                                   W
+W                                       W
+L0          J3                  B       W
+W                                       W
+W       I                               L1
+W                                       W
+W   B   B                   B           W
+W                                       W
+W   H0                                  W
+""" },
+
+{   'name': 2, 
+    'map': """
+W   W   W   W   W           F
+W   W   L0                  W
+W   W       W   B           L1
+L0                  W       W
+W   W       W       W       W
+W   W   B   W       W       W
+    H0                  B    
+W   W   W   W   W           W
+""" },
+
+{   'name': 3, 
+    'map': """
+L7              H                       
+            B                           
+            W                           
+        B               L5              
+            B                           
+    B                                   
+                                        
+                            W           
+                                    L1  
+L4                  F                   
+""" },
+]
+
+LEVEL_TO_START = 1
+
 
 KEY_STEPS = {
     pygame.K_LEFT:  (-1, 0),
@@ -104,15 +158,22 @@ LASER_DIRS = [
 ]
 
 
+
 class BlueBallGame:
+
     def __init__(self):
         self.windowSurface = pygame.display.get_surface()
         self.blocksSurface = pygame.image.load("blocks.png").convert()  # DOC: convert() to create a copy that will draw more quickly on the screen
         self.blocksSurface.set_colorkey(self.blocksSurface.get_at((0,0)))  # set transparency color from top-left corner
 
-        self.load_level(LEVEL1)
+        self.levelIndex = 0  # first by default
+        for (i,l) in enumerate(LEVELS):
+            if l["name"] == LEVEL_TO_START:
+                self.levelIndex = i
+        self.load_level()
     
-    def load_level(self, blocksText):
+    def load_level(self):
+        blocksText = LEVELS[self.levelIndex]["map"]
         blocks = split_text_to_cells(blocksText)
         w, h = len(blocks[0]), len(blocks)
 
@@ -139,7 +200,7 @@ class BlueBallGame:
                         self.finishPos = (j, i)
                     elif letter == "B":     # Box
                         self.boxes.append((j, i))
-                    elif letter == "L":     # Laser
+                    elif letter in "LJ":    # Laser or Ice laser
                         d = int(name[1])     # direction
                         self.lazers.append(((j, i), d))
                     bits = BLOCK_MAP.get(letter, 0)
@@ -167,21 +228,31 @@ class BlueBallGame:
         # level
         for (i,a) in enumerate(self.level):
          for (j,bits) in enumerate(a):
-            if bits:
-                if bits & BLOCK_BOX_BIT:
+            if not bits & BLOCK_VISIBLE:
+                self.draw_block((j,i), "S")         # just space
+            else:
+                if bits & BLOCK_NEEDS_BG:           # draw background for some blocks
+                    self.draw_block((j,i), "S")
+                
+                if bits & BLOCK_BOX_BIT:            # Box
                     self.draw_block((j,i), "B")
+                #elif not bits & BLOCK_VISIBLE:     # Space (background)
                 else:
-                    name = self.levelBlocks[i][j]  # get block name from level block map
+                    name = self.levelBlocks[i][j]   #  get block name from level block map
                     self.draw_block((j,i), name)
-                for ray in range(4):
-                    if bits & (CELL_RAY << ray):
-                        self.draw_block((j,i), "R%d" % ray)
+            for ray in range(4):                # Rays
+                if bits & (CELL_RAY << ray):
+                    self.draw_block((j,i), "R%d" % ray)
         
         # hero
         self.draw_block(self.heroPos, "H0")
         
         # update window
-        self.windowSurface.blit(pygame.transform.scale(self.levelSurface, (360, 360)), (0, 0))
+        w, h = self.levelSize
+        w2, h2 = self.windowSurface.get_size()
+        k = int(min(w2/w, h2/h))
+        self.windowSurface.fill('black')
+        self.windowSurface.blit(pygame.transform.scale(self.levelSurface, (w*k, h*k)), (0, 0))
         pygame.display.update()
     
     def update_lazers(self):
@@ -227,10 +298,15 @@ class BlueBallGame:
 
             x, y = self.heroPos
             if self.level[y][x] & CELL_RAYS:
-                return
+                print("=== GAME OVER ===")
+                self.load_level()
+                #return
             
             if self.heroPos == self.finishPos:
-                return
+                print("=== I WIN ===")
+                self.levelIndex += 1
+                self.load_level()
+                #return
 
 
     def try_to_step(self, step):
