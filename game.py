@@ -138,7 +138,7 @@ L7              H
                                     L1  
 L4                  F                   
 """ },
-]
+] # end of LEVELS
 
 LEVEL_TO_START = 1
 
@@ -182,10 +182,13 @@ class BlueBallGame:
         self.levelSurface = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
 
         self.level = []  # property bits for each cell
+        self.updateScene = True  # set if we need to update the scene (recalculate lazers etc)
         self.boxes = []  # list of positions
         self.lazers = []  # list of (pos, direction)
         self.heroPos = None
+        self.heroState = 0  # index of skin
         self.finishPos = None
+        self.canPlay = True  # False on dying
         
         for i in range(h):
             row = []
@@ -207,7 +210,7 @@ class BlueBallGame:
                 row.append(bits)
             self.level.append(row)
     
-    def is_in_level(self, pos):
+    def in_level(self, pos):
         x, y = pos
         w, h = self.levelSize
         return 0 <= x < w and 0 <= y < h
@@ -222,7 +225,7 @@ class BlueBallGame:
             area = area
         )
     
-    def redraw_level(self):
+    def redraw_scene(self):
         self.levelSurface.fill('black')
         
         # level
@@ -245,7 +248,7 @@ class BlueBallGame:
                     self.draw_block((j,i), "R%d" % ray)
         
         # hero
-        self.draw_block(self.heroPos, "H0")
+        self.draw_block(self.heroPos, "H%d" % self.heroState)
         
         # update window
         w, h = self.levelSize
@@ -254,81 +257,114 @@ class BlueBallGame:
         self.windowSurface.fill('black')
         self.windowSurface.blit(pygame.transform.scale(self.levelSurface, (w*k, h*k)), (0, 0))
         pygame.display.update()
-    
-    def update_lazers(self):
+
+
+    def update_scene_if_needed(self):
+        if not self.updateScene: return  # nothing changed - no need to update
+        
         w, h = self.levelSize
         
+        # Update lazers (corresponding cell bits: CELL_RAYS)
         for i in range(h):
          for j in range(w):
             self.level[i][j] &= ~CELL_RAYS;
-        
         for (pos0,d) in self.lazers:
             ray = d>>1  # 0..3
             step = LASER_DIRS[d]
             pos = pos0
             while True:
                 pos = (x,y) = add(pos, step)
-                if not self.is_in_level(pos): break
+                if not self.in_level(pos): break
                 if self.level[y][x] & BLOCK_OPAQUE: break
                 self.level[y][x] |= CELL_RAY << ray;
+        
+        self.updateScene = False
+    
 
+    def try_to_step(self, step):
+        """step is e.g. (-1,0)"""
+        newPos = (x,y) = add(self.heroPos, step)
+        #print(step, newPos)
+        if not self.in_level(newPos): return False
+        bits = self.level[y][x]
+
+        if not bits & BLOCK_SOLID:
+            self.heroPos = newPos
+            self.updateScene = True
+            return True
+        
+        if bits & BLOCK_BOX_BIT:  # box. can we move it?
+            newPos2 = (x2,y2) = add(newPos, step)
+            if self.in_level(newPos2):
+                bits2 = self.level[y2][x2]
+                if not bits2 & BLOCK_SOLID:  # we can move it
+                    self.level[y ][x ] &= ~BLOCK_BOX
+                    self.level[y2][x2] |=  BLOCK_BOX
+                    self.heroPos = newPos
+                    self.updateScene = True
+                    return "moveBox"  # hero face control is outside
+
+        return False
+    
     
     def run_loop(self):
         
+        # animations
+        timeToRestoreFace = 0
+        timeToNextDeathFrame = 0
+        timeToNewLevel = 0
+        
         while True:
             
-            updateLazers = False
-            
+            ticks = pygame.time.get_ticks()  # in ms
+
+            # animations
+            if timeToRestoreFace and timeToRestoreFace <= ticks:
+                timeToRestoreFace = 0
+                self.heroState = 0
+            if timeToNextDeathFrame and timeToNextDeathFrame <= ticks:
+                if self.heroState < 8:
+                    self.heroState += 1
+                    timeToNextDeathFrame = ticks + 100
+                else:
+                    timeToNextDeathFrame = 0
+                    timeToNewLevel = ticks + 500
+            if timeToNewLevel and timeToNewLevel <= ticks:
+                timeToRestoreFace = 0
+                timeToNextDeathFrame = 0
+                timeToNewLevel = 0
+                self.load_level()
+
             # handle all events
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
                     return
-                elif e.type == pygame.KEYDOWN:
-                    step = KEY_STEPS.get(e.key)  # e.g. (-1,0)
-                    if step:
-                        wasMoved = self.try_to_step(step)
-                        if wasMoved:
-                            updateLazers = True
-            
-            updateLazers = True  # always?
-            if updateLazers:
-                self.update_lazers();
-            
-            self.redraw_level()
+                elif self.canPlay:
+                    if e.type == pygame.KEYDOWN:
+                        step = KEY_STEPS.get(e.key)  # e.g. (-1,0)
+                        stepResult = self.try_to_step(step)
+                        if stepResult == "moveBox":
+                            self.heroState = 1  # face for moving a box
+                            timeToRestoreFace = ticks + 500
 
-            x, y = self.heroPos
-            if self.level[y][x] & CELL_RAYS:
-                print("=== GAME OVER ===")
-                self.load_level()
-                #return
+            if self.canPlay:
+                x, y = self.heroPos
+                if self.level[y][x] & CELL_RAYS:
+                    print("=== GAME OVER ===")
+                    self.canPlay = False
+                    self.heroState = 2  # Start dying
+                    timeToNextDeathFrame = ticks + 100
+                    timeToRestoreFace = 0  # disable restore
+                
+                if self.heroPos == self.finishPos:
+                    print("=== YOU WIN ===")
+                    self.canPlay = False
+                    self.levelIndex += 1
+                    timeToNewLevel = ticks + 1000
+
+            self.update_scene_if_needed()
             
-            if self.heroPos == self.finishPos:
-                print("=== I WIN ===")
-                self.levelIndex += 1
-                self.load_level()
-                #return
-
-
-    def try_to_step(self, step):
-        "move is e.g. (-1,0)"
-        newPos = (x,y) = add(self.heroPos, step)
-        #print(step, newPos)
-        if self.is_in_level(newPos):
-            bits = self.level[y][x]
-            if bits & BLOCK_BOX_BIT:  # box. can we move it?
-                newPos2 = (x2,y2) = add(newPos, step)
-                if self.is_in_level(newPos2):
-                    bits2 = self.level[y2][x2]
-                    if not bits2 & BLOCK_SOLID:  # we can move it
-                        self.level[y ][x ] &= ~BLOCK_BOX
-                        self.level[y2][x2] |=  BLOCK_BOX
-                        self.heroPos = newPos
-                        return True
-            elif not bits & BLOCK_SOLID:
-                self.heroPos = newPos
-                return True
-        return False
-    
+            self.redraw_scene()
 
 
 def test():
@@ -338,7 +374,8 @@ def test():
 def main():
     #test(); return
     
-    pygame.display.init()
+    pygame.init()
+
     pygame.display.set_mode((800, 600), flags = pygame.RESIZABLE, depth = 32)
     pygame.display.set_caption('Blue Ball')
     
