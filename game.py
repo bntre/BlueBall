@@ -159,6 +159,13 @@ LASER_DIRS = [
 
 
 
+class Animation:
+    def __init__(self, name, time, proc):
+        self.name = name
+        self.time = time  # ticks
+        self.proc = proc  # returns delay for new frame or None on animation end
+
+
 class BlueBallGame:
 
     def __init__(self):
@@ -182,13 +189,16 @@ class BlueBallGame:
         self.levelSurface = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
 
         self.level = []  # property bits for each cell
-        self.updateScene = True  # set if we need to update the scene (recalculate lazers etc)
+        self.recalculateLazers = True  # set if we need to update the scene - recalculate lazers
+        self.redrawScene = True
         self.boxes = []  # list of positions
         self.lazers = []  # list of (pos, direction)
         self.heroPos = None
         self.heroState = 0  # index of skin
         self.finishPos = None
         self.canPlay = True  # False on dying
+        self.ticks = 0  # current time in ms; pygame.time.get_ticks()
+        self.animations = []  # list of Animation objects
         
         for i in range(h):
             row = []
@@ -259,9 +269,7 @@ class BlueBallGame:
         pygame.display.update()
 
 
-    def update_scene_if_needed(self):
-        if not self.updateScene: return  # nothing changed - no need to update
-        
+    def recalculate_lazers(self):
         w, h = self.levelSize
         
         # Update lazers (corresponding cell bits: CELL_RAYS)
@@ -277,21 +285,80 @@ class BlueBallGame:
                 if not self.in_level(pos): break
                 if self.level[y][x] & BLOCK_OPAQUE: break
                 self.level[y][x] |= CELL_RAY << ray;
-        
-        self.updateScene = False
     
+    
+    # Animations
+    def process_animation(self, a):
+        """Returns False when animation ended"""
+        if self.ticks < a.time:
+            return True  # continue waiting
+        else:
+            newDelay = a.proc()
+            if newDelay is None:
+                return False  # ended
+            else:
+                a.time += newDelay
+                return True  # new proc call requested
+    def process_animations(self):
+        self.animations = list(filter(
+            self.process_animation,  # process_animation() returns False on animation end
+            self.animations
+        ))
+    def remove_animation(self, name):
+        self.animations = list(filter(
+            lambda a: a.name != name,
+            self.animations
+        ))
+    def add_animation(self, name, delay, proc):
+        a = Animation(name, self.ticks + delay, proc)
+        self.animations.append(a)
 
-    def try_to_step(self, step):
+    # pushing a box animation
+    def start_pushing_box_animation(self):
+        self.heroState = 1  # face for pushing a box
+        self.remove_animation("pushingBox")
+        self.add_animation("pushingBox", 500, self.proc_pushing_box_animation)
+        self.redrawScene = True
+    def proc_pushing_box_animation(self):
+        self.heroState = 0
+        self.redrawScene = True
+        return None  # ended
+    def stop_pushing_box_animation(self):
+        self.remove_animation("pushingBox")
+    
+    # dying animation
+    def start_dying_animation(self):
+        self.heroState = 2  # begin to die
+        self.add_animation("dying", 100, self.proc_dying_animation)
+        self.redrawScene = True
+    def proc_dying_animation(self):
+        if self.heroState < 8:
+            self.heroState += 1
+            self.redrawScene = True
+            return 100  # request next frame
+        else:
+            self.start_new_level_animation()  # reload same level
+            return None  # ended
+
+    # starting new level (1 sec pause)
+    def start_new_level_animation(self):
+        self.add_animation("newLevel", 1000, self.proc_new_level_animation)
+    def proc_new_level_animation(self):
+        self.load_level()
+        return None
+
+
+    def handle_hero_step(self, step):
         """step is e.g. (-1,0)"""
         newPos = (x,y) = add(self.heroPos, step)
         #print(step, newPos)
-        if not self.in_level(newPos): return False
+        if not self.in_level(newPos): return
         bits = self.level[y][x]
 
         if not bits & BLOCK_SOLID:
             self.heroPos = newPos
-            self.updateScene = True
-            return True
+            self.recalculateLazers = True
+            self.redrawScene = True
         
         if bits & BLOCK_BOX_BIT:  # box. can we move it?
             newPos2 = (x2,y2) = add(newPos, step)
@@ -301,70 +368,51 @@ class BlueBallGame:
                     self.level[y ][x ] &= ~BLOCK_BOX
                     self.level[y2][x2] |=  BLOCK_BOX
                     self.heroPos = newPos
-                    self.updateScene = True
-                    return "moveBox"  # hero face control is outside
-
-        return False
-    
+                    self.recalculateLazers = True
+                    self.redrawScene = True
+                    self.start_pushing_box_animation()
     
     def run_loop(self):
         
-        # animations
-        timeToRestoreFace = 0
-        timeToNextDeathFrame = 0
-        timeToNewLevel = 0
-        
         while True:
             
-            ticks = pygame.time.get_ticks()  # in ms
-
-            # animations
-            if timeToRestoreFace and timeToRestoreFace <= ticks:
-                timeToRestoreFace = 0
-                self.heroState = 0
-            if timeToNextDeathFrame and timeToNextDeathFrame <= ticks:
-                if self.heroState < 8:
-                    self.heroState += 1
-                    timeToNextDeathFrame = ticks + 100
-                else:
-                    timeToNextDeathFrame = 0
-                    timeToNewLevel = ticks + 500
-            if timeToNewLevel and timeToNewLevel <= ticks:
-                timeToRestoreFace = 0
-                timeToNextDeathFrame = 0
-                timeToNewLevel = 0
-                self.load_level()
+            self.ticks = pygame.time.get_ticks()  # in ms
 
             # handle all events
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
                     return
-                elif self.canPlay:
-                    if e.type == pygame.KEYDOWN:
+                elif e.type == pygame.KEYDOWN:
+                    if self.canPlay:
                         step = KEY_STEPS.get(e.key)  # e.g. (-1,0)
-                        stepResult = self.try_to_step(step)
-                        if stepResult == "moveBox":
-                            self.heroState = 1  # face for moving a box
-                            timeToRestoreFace = ticks + 500
+                        if step:
+                            self.handle_hero_step(step)
+
+            # Process all animations (remove ended ones)
+            self.process_animations()
 
             if self.canPlay:
                 x, y = self.heroPos
                 if self.level[y][x] & CELL_RAYS:
                     print("=== GAME OVER ===")
                     self.canPlay = False
-                    self.heroState = 2  # Start dying
-                    timeToNextDeathFrame = ticks + 100
-                    timeToRestoreFace = 0  # disable restore
+                    self.stop_pushing_box_animation() # if any
+                    self.start_dying_animation()
                 
                 if self.heroPos == self.finishPos:
                     print("=== YOU WIN ===")
                     self.canPlay = False
                     self.levelIndex += 1
-                    timeToNewLevel = ticks + 1000
+                    self.stop_pushing_box_animation() # if any
+                    self.start_new_level_animation()
 
-            self.update_scene_if_needed()
+            if self.recalculateLazers:
+                self.recalculate_lazers()
+                self.recalculateLazers = False
             
-            self.redraw_scene()
+            if self.redrawScene:
+                self.redraw_scene()
+                self.redrawScene = False
 
 
 def test():
