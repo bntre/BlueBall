@@ -1,5 +1,5 @@
 
-import sys
+import sys, re
 import pygame
 
 
@@ -11,6 +11,7 @@ def sub(p0, p1):
     return (p0[0] - p1[0], p0[1] - p1[1])
 def mult(p, k):
     return (p[0] * k, p[1] * k)
+
 
 def split_text_to_cells(text, cell_width = 4):
     "multiline text -> [[cell]]"
@@ -69,6 +70,7 @@ PROPERTY_BITS_MAP = {    # block name letter => property bits
     "L": BITS_LASER,
     "J": BITS_ICELASER,
     "B": BITS_BOX,
+    "A": BITS_WALL,         # Arrow (dynamic blocks)
 }
 
 BLOCK_NAME_SHIFT = 16
@@ -77,10 +79,9 @@ BLOCK_NAME_MASK = (0x7FF) << BLOCK_NAME_SHIFT  # 3 bits for direction, 8 bits fo
 CELLSIZE = 9
 
 
-def block_name_to_letter_direction(name):
+def block_name_to_pair(name):
     return name[0], int(name[1:] or "0")
-def block_name_to_bits(name):
-    letter, direction = block_name_to_letter_direction(name)
+def block_pair_to_bits(letter, direction):
     bits  = ord(letter) <<      BLOCK_NAME_SHIFT
     bits |=   direction << (8 + BLOCK_NAME_SHIFT)
     return bits
@@ -91,8 +92,8 @@ def create_image_areas(text, cell_width = 4):
     m = split_text_to_cell_map(text, cell_width)
     areas = {}
     for (name,(i,j)) in m.items():
-        name_bits = block_name_to_bits(name)
-        areas[name_bits] = (j*CELLSIZE, i*CELLSIZE, CELLSIZE, CELLSIZE)
+        nameBits = block_pair_to_bits(*block_name_to_pair(name))
+        areas[nameBits] = (j*CELLSIZE, i*CELLSIZE, CELLSIZE, CELLSIZE)
     return areas
 
 # block name bits => area
@@ -103,8 +104,8 @@ S   W   F   I
 L0  L2  L1  L3
 L6  L5  L7  L4
 B           
-            
-            
+A7  A5  A4  A6
+A2  A0  A1  A3
 J2  J1  J3  J0
 J6  J5  J7  J4
 R1  R0  R2  R3
@@ -125,16 +126,20 @@ W   W   W   W   W   W
 {   'name': "temp", 
     'map': """
 W   W   W   W   W   W   W   W   W   W   W
-W   F       H                           W
+W   F       H           i               W
 W                                       W
 L0          J3                  B       W
 W                                       W
 W       I                               L1
-W                                       W
+W                       j               W
 W   B   B                   B           W
 W                                       W
 W                                       W
-""" },
+""",
+    'dynamics': [
+        ("ij", "A7", 500)
+    ]
+},
 
 {   'name': 2, 
     'map': """
@@ -161,10 +166,27 @@ L7              H
                                     L1  
 L4                  F                   
 """ },
+
+{   'name': 4, 
+    'map': """
+W   W   W   W   W   W   W   W   W   W   W   W
+W   a                                   b   W
+W                                           W
+W   W                               W   W   W
+W   F                               W   H   W
+W                                           W
+W                                           W
+W   W   W   W   W   W   W   W   W   W   W   W
+""",
+    'dynamics': [
+        ("ab", "L3", 500)
+    ]
+},
+
 ] # end of LEVELS
 
-LEVEL_TO_START = 1
 LEVEL_TO_START = "temp"
+LEVEL_TO_START = 4
 
 
 KEY_STEPS = {
@@ -200,7 +222,7 @@ class DynamicAnimation(Animation):
         self.delay          = delay     # ticks between frames
 
 class Lazer:
-    def __init__(self, direction, staticPos, dynamic = None):
+    def __init__(self, direction, staticPos = None, dynamic = None):
         self.direction = direction  # 0..7  see LASER_DIRS
         self.staticPos = staticPos  # (x, y) or None for dynamic
         self.dynamic   = dynamic    # DynamicAnimation for dynamic or None for static
@@ -217,85 +239,128 @@ class BlueBallGame:
         for (i,level) in enumerate(LEVELS):
             if level["name"] == LEVEL_TO_START:
                 self.levelIndex = i
+        self.reloadLevel = False  # used to trigger level reloading (including animations) out of process_animations call
         self.load_level()
+    
+    
+    def parse_level(self, levelDict):
+        cellsText = split_text_to_cells(levelDict['map'])
+        w, h = len(cellsText[0]), len(cellsText)
+        
+        cells = [[None]*w for _ in range(h)]  # [i][j] => (letter, direction) or None
+        aliases = {}                          # cell alias => (i,j)
+        
+        for (i,row) in enumerate(cellsText):
+         for (j,cellText) in enumerate(row):
+            if cellText:
+                (letter, d, alias) = re.match(r'^([A-Z]?)([0-9]?)([a-z]?)$', cellText).groups()
+                if letter:
+                    cells[i][j] = (letter, int(d or "0"))
+                if alias:
+                    aliases[alias] = (j,i)
+        
+        dynamics = []  # [([poses], [[block names]], delay)]
+        for (cellAliases, blockNames, delay) in levelDict.get('dynamics', ()):
+            dynamics.append((
+                tuple(aliases[a] for a in cellAliases),
+                [re.findall(r'[A-Z][0-9]?', r) for r in blockNames.split("/")],
+                delay
+            ))
+        
+        return ((w, h), cells, dynamics)
     
     def load_level(self):
         if self.levelIndex == len(LEVELS): raise "CONGRATULATIONS!"
     
-        blocksText = LEVELS[self.levelIndex]["map"]
-        blocks = split_text_to_cells(blocksText)
-        w, h = len(blocks[0]), len(blocks)
-
+        (w, h), mapCells, dynamics = self.parse_level(LEVELS[self.levelIndex])
+        
         self.levelSize = (w, h)
-        #self.levelBlocks = blocks  # block map loaded from block text
         self.levelSurface = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
+        self.ticks = pygame.time.get_ticks()  # current time in ms (already needed for starting animations)
 
-        self.level = []  # cell integer values
         self.finishPos = None
         self.heroPos = None
         self.heroState = 0  # index of skin
         self.boxes = []  # list of positions
         self.lazers = []  # list of Lazer objects
         
-        self.canPlay = True  # False on dying
         self.animations = []  # list of Animation objects
         self.currentFrameDynamics = []  # used to process all current frame dynamic animations at once
+
+        # Fill level cell integers
+        self.level = [[0]*w for _ in range(h)]  # cell integer values
+        for (i,row) in enumerate(mapCells):
+         for (j,blockPair) in enumerate(row):
+            if blockPair:
+                letter, direction = blockPair
+                cell = 0
+                if letter == "H":           # Hero
+                    self.heroPos = (j, i)
+                else:
+                    if letter == "F":       # Finish: special case - draw by BIT_FINISH
+                        self.finishPos = (j, i)
+                        cell |= BIT_FINISH
+                    elif letter == "B":     # Box: special case - draw by BIT_BOX
+                        self.boxes.append((j, i))
+                        cell |= BIT_BOX
+                    elif letter in "LJ":    # Laser or Ice laser
+                        lazer = Lazer(direction, (j, i))
+                        self.lazers.append(lazer)
+                    if cell == 0:  # no special bits were set - means regular static object - add block name bits for drawing
+                        cell |= block_pair_to_bits(letter, direction)
+                    cell |= PROPERTY_BITS_MAP.get(letter, 0)
+                self.level[i][j] = cell
+
+        # Start dynamic animations
+        for (poses, blocks, delay) in dynamics:
+            self.start_dynamic_animation(poses, blocks, delay)
+        
         self.recalculateLazerRays = True  # set if we need to update the scene - recalculate lazer rays
         self.redrawScene = True
-        
-        self.reloadLevel = False  # used to trigger level reloading (including animations) out of process_animations call
-
-        self.ticks = pygame.time.get_ticks()  # current time in ms (already needed for starting animations)
-        
-        for i in range(h):
-            row = []
-            for j in range(w):
-                cell = 0  # 0 for space (default)
-                name = blocks[i][j]
-                if name:
-                    letter, direction = block_name_to_letter_direction(name)
-                    if letter == "H":           # Hero
-                        self.heroPos = (j, i)
-                    else:
-                        if letter == "F":       # Finish: special case - draw by BIT_FINISH
-                            self.finishPos = (j, i)
-                            cell |= BIT_FINISH
-                        elif letter == "B":     # Box: special case - draw by BIT_BOX
-                            self.boxes.append((j, i))
-                            cell |= BIT_BOX
-                        elif letter in "LJ":    # Laser or Ice laser
-                            lazer = Lazer(direction, (j, i))
-                            self.lazers.append(lazer)
-                        if cell == 0:  # no special bits were set - means regular static object - add block name bits for drawing
-                            cell |= block_name_to_bits(name)
-                        cell |= PROPERTY_BITS_MAP.get(letter, 0)
-                row.append(cell)
-            self.level.append(row)
+        self.canPlay = True  # False on dying
     
-        #!!! temp
-        if LEVELS[self.levelIndex]["name"] == "temp":
-            self.start_dynamic_block(
-                block_name_to_bits("W"),
-                PROPERTY_BITS_MAP["W"],
-                [(5,1),(5,2),(5,3),(5,4),(5,5),(5,4),(5,3),(5,2)],
-                500
+    def start_dynamic_animation(self, keyPoses, blocks, delay):
+        print(keyPoses, blocks) #!!!
+        poses = []  # collect all poses (from key poses)
+        pc = len(keyPoses)
+        for i in range(pc):
+            (x0,y0), (x1,y1) = keyPoses[i], keyPoses[(i+1)%pc]
+            if y0 == y1:  # horizontal
+                poses += [(x,y0) for x in range(x0, x1, x0 < x1 and 1 or -1)]
+            elif x0 == x1:  # vertical
+                poses += [(x0,y) for y in range(y0, y1, y0 < y1 and 1 or -1)]
+            else:
+                raise "invalid dynamic"
+        # Now start dynamic for each block in 2d array
+        for (i,row) in enumerate(blocks):
+         for (j,blockName) in enumerate(row):
+            (letter, direction) = block_name_to_pair(blockName)
+            d = self.start_dynamic_block(
+                block_pair_to_bits(letter, direction),
+                PROPERTY_BITS_MAP[letter],
+                [add(p, (j,i)) for p in poses], 
+                delay
             )
-        
+            if letter in "LJ":
+                lazer = Lazer(direction, dynamic = d)
+                self.lazers.append(lazer)
+
+    
     def in_level(self, pos):
         x, y = pos
         w, h = self.levelSize
         return 0 <= x < w and 0 <= y < h
     
-    def draw_block(self, pos, name = None, nameBits = None):
+    def draw_block(self, pos, letter = None, direction = 0, nameBits = None):
         if nameBits is None: 
-            nameBits = block_name_to_bits(name)
+            nameBits = block_pair_to_bits(letter, direction)
         area = BLOCK_AREAS.get(nameBits)
-        if not area: return
-        self.levelSurface.blit(
-            self.blocksSurface, 
-            dest = mult(pos, CELLSIZE), 
-            area = area
-        )
+        if area:
+            self.levelSurface.blit(
+                self.blocksSurface, 
+                dest = mult(pos, CELLSIZE), 
+                area = area
+            )
     
     def redraw_scene(self):
         self.levelSurface.fill('black')
@@ -316,7 +381,7 @@ class BlueBallGame:
                 self.draw_block((j,i), nameBits = nameBits)
         
         # hero
-        self.draw_block(self.heroPos, "H%d" % self.heroState)
+        self.draw_block(self.heroPos, "H", self.heroState)
         
         # dynamic objects
         for a in self.animations:
@@ -329,7 +394,7 @@ class BlueBallGame:
          for (j,cell) in enumerate(a):
             for ray in range(4):                # Rays
                 if cell & (BIT_RAY0 << ray):
-                    self.draw_block((j,i), "R%d" % ray)
+                    self.draw_block((j,i), "R", ray)
             if cell & BIT_BOX:                  # Box
                 self.draw_block((j,i), "B")
         
@@ -423,6 +488,7 @@ class BlueBallGame:
             poses, delay
         )
         self.animations.append(d)
+        return d
     def proc_dynamic_block(self, d):
         self.currentFrameDynamics.append(d)  # we process all current frame dynamics at once
         d.time += d.delay
