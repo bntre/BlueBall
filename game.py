@@ -1,5 +1,5 @@
 
-import sys, re
+import re
 import pygame
 
 
@@ -46,22 +46,24 @@ def split_text_to_cell_map(text, cell_width = 4):
 #                 # 0 for boxes - BIT_BOX used instead;
 
 
-BIT_VISIBLE     = 1
+BIT_VISIBLE     = 1     #!!! needed?
 BIT_SOLID       = 1<<1
 BIT_OPAQUE      = 1<<2
 BIT_FINISH      = 1<<3  # to mark finish cell (it stays "invisible")
 BIT_BOX         = 1<<4
-BIT_DYNAMIC     = 1<<5  # dynamic object
+BIT_BOX_BROKEN  = 1<<5
+#BIT_DYNAMIC     = 1<<7  # dynamic object    !!! needed?
 BIT_RAY0        = 1<<8  # shift 0..3 for  --  |  /  \
 BITS_RAYS       = (BIT_RAY0 << 0) | (BIT_RAY0 << 1) | (BIT_RAY0 << 2) | (BIT_RAY0 << 3)
 
-BITS_WALL      = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE
-#BITS_FINISH    = BIT_VISIBLE | BIT_NEEDS_BG
-#BITS_FINISH    = BIT_VISIBLE
-BITS_ICE       = BIT_VISIBLE | BIT_SOLID
-BITS_LASER     = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE
-BITS_ICELASER  = BIT_VISIBLE | BIT_SOLID
-BITS_BOX       = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE | BIT_BOX
+BITS_WALL       = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE
+#BITS_FINISH     = BIT_VISIBLE | BIT_NEEDS_BG
+#BITS_FINISH     = BIT_VISIBLE
+BITS_ICE        = BIT_VISIBLE | BIT_SOLID
+BITS_LASER      = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE
+BITS_ICELASER   = BIT_VISIBLE | BIT_SOLID
+BITS_BOX        = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE | BIT_BOX
+#BITS_BOX_BROKEN = BIT_VISIBLE |                          BIT_BOX_BROKEN
 
 PROPERTY_BITS_MAP = {    # block name letter => property bits
     "W": BITS_WALL,
@@ -103,7 +105,7 @@ H4  H5  H6  H7
 S   W   F   I
 L0  L2  L1  L3
 L6  L5  L7  L4
-B           
+B0  B1      
 A7  A5  A4  A6
 A2  A0  A1  A3
 J2  J1  J3  J0
@@ -167,7 +169,7 @@ L7              H
 L4                  F                   
 """ },
 
-{   'name': 4, 
+{   'name': 4,
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   W
 W   a                                   b   W
@@ -183,17 +185,56 @@ W   W   W   W   W   W   W   W   W   W   W   W
     ]
 },
 
+{   'name': 5,
+    'map': """
+W   W   W   W   W   W   W   W   W   W   W
+W   F           a                   L1  W
+W                           c           W
+W   L0                                  W
+W                                       W
+W   L0                                  W
+W                                       W
+W                                       W
+W   L0          b                   W   W
+W                           d       H   W
+W   W   W   W   W   W   W   W   W   W   W
+""",
+    'dynamics': [
+        ("ab", "L2", 500),
+        ("cd", "L3", 500),
+    ]
+},
+
+{   'name': 6,
+    'map': """
+W   W   W   F   W   W
+L0      a           W
+L0                  W
+L0                  W
+L0                  W
+L0                  W
+L0                  W
+L0      b           W
+L0                  W
+W   W   W   W   H   W
+""",
+    'dynamics': [
+        ("ab", "A5/A6", 500),
+    ]
+},
+
+
 ] # end of LEVELS
 
 LEVEL_TO_START = "temp"
-LEVEL_TO_START = 4
+LEVEL_TO_START = 5
 
 
 KEY_STEPS = {
     pygame.K_LEFT:  (-1, 0),
-    pygame.K_RIGHT: (1, 0),
-    pygame.K_UP:    (0, -1),
-    pygame.K_DOWN:  (0, 1),
+    pygame.K_RIGHT: ( 1, 0),
+    pygame.K_UP:    ( 0,-1),
+    pygame.K_DOWN:  ( 0, 1),
 }
 
 LASER_DIRS = [
@@ -283,6 +324,7 @@ class BlueBallGame:
         self.heroState = 0  # index of skin
         self.boxes = []  # list of positions
         self.lazers = []  # list of Lazer objects
+        self.lazersOn = True  # we turn them off when hero reach the finish
         
         self.animations = []  # list of Animation objects
         self.currentFrameDynamics = []  # used to process all current frame dynamic animations at once
@@ -317,10 +359,9 @@ class BlueBallGame:
         
         self.recalculateLazerRays = True  # set if we need to update the scene - recalculate lazer rays
         self.redrawScene = True
-        self.canPlay = True  # False on dying
+        self.canPlay = True  # False on level ending (just waiting for final animations end)
     
     def start_dynamic_animation(self, keyPoses, blocks, delay):
-        print(keyPoses, blocks) #!!!
         poses = []  # collect all poses (from key poses)
         pc = len(keyPoses)
         for i in range(pc):
@@ -374,6 +415,8 @@ class BlueBallGame:
                 self.draw_block((j,i), "S")     # just space
             if cell & BIT_FINISH:
                 self.draw_block((j,i), "F")     # Finish is like a space
+            if cell & BIT_BOX_BROKEN:
+                self.draw_block((j,i), "B", 1)  # Broken box is like a space
 
             # Draw by block name (e.g. L1,..)
             nameBits = cell & BLOCK_NAME_MASK
@@ -414,15 +457,16 @@ class BlueBallGame:
         for i in range(h):
          for j in range(w):
             self.level[i][j] &= ~BITS_RAYS;
-        for lazer in self.lazers:
-            ray = lazer.direction >> 1  # 0..3: - | / \
-            step = LASER_DIRS[lazer.direction]
-            pos = lazer.staticPos or lazer.dynamic.poses[lazer.dynamic.posIndex]
-            while True:
-                pos = (x,y) = add(pos, step)
-                if not self.in_level(pos): break
-                if self.level[y][x] & BIT_OPAQUE: break
-                self.level[y][x] |= BIT_RAY0 << ray;
+        if self.lazersOn:
+            for lazer in self.lazers:
+                ray = lazer.direction >> 1  # 0..3: - | / \
+                step = LASER_DIRS[lazer.direction]
+                pos = lazer.staticPos or lazer.dynamic.poses[lazer.dynamic.posIndex]
+                while True:
+                    pos = (x,y) = add(pos, step)
+                    if not self.in_level(pos): break
+                    if self.level[y][x] & BIT_OPAQUE: break
+                    self.level[y][x] |= BIT_RAY0 << ray;
     
     
     # Animations
@@ -483,12 +527,15 @@ class BlueBallGame:
     def start_dynamic_block(self, nameBits, propertyBits, poses, delay):
         d = DynamicAnimation(
             "dyn", self.ticks, self.proc_dynamic_block, 
-            nameBits, 
-            propertyBits | BIT_DYNAMIC, 
+            nameBits,
+            #propertyBits | BIT_DYNAMIC, 
+            propertyBits,
             poses, delay
         )
         self.animations.append(d)
         return d
+    def stop_dynamic_blocks(self):
+        self.stop_animation("dyn")
     def proc_dynamic_block(self, d):
         self.currentFrameDynamics.append(d)  # we process all current frame dynamics at once
         d.time += d.delay
@@ -504,7 +551,18 @@ class BlueBallGame:
             d.posIndex += 1
             d.posIndex %= len(d.poses)
             (x,y) = d.poses[d.posIndex]
+            
+            # check a box here
+            if self.level[y][x] & BIT_BOX:
+                self.level[y][x] &= ~BITS_BOX
+                self.level[y][x] |=  BIT_BOX_BROKEN  # single bit only
+            
+            # check the hero is here
+            if self.canPlay and self.heroPos == (x,y):
+                self.end_playing(False)
+            
             self.level[y][x] |= d.propertyBits
+            
         #
         self.currentFrameDynamics = []
         self.recalculateLazerRays = True
@@ -535,6 +593,24 @@ class BlueBallGame:
                     self.redrawScene = True
                     self.start_pushing_box_animation()
     
+    def end_playing(self, win):
+        if not self.canPlay: return  # already ended
+        self.canPlay = False  # player can't play, but wait for some animations end
+        #self.stop_dynamic_blocks()
+        if win:
+            print("=== YOU WIN ===")
+            self.lazersOn = False  # turn lazers off (otherwise lazer may reach the winning hero)
+            self.recalculateLazerRays = True
+            self.redrawScene = True
+            #
+            self.levelIndex += 1  #!!! use some self.switchLevel instead
+            self.stop_pushing_box_animation() # if any
+            self.start_new_level_animation()
+        else:
+            print("=== YOU LOSE ===")
+            self.stop_pushing_box_animation() # if any
+            self.start_dying_animation()
+    
     def run_loop(self):
         
         while True:
@@ -561,25 +637,17 @@ class BlueBallGame:
 
             self.process_current_frame_dynamics()
 
-            if self.canPlay:
-                x, y = self.heroPos
-                if self.level[y][x] & BITS_RAYS:
-                    print("=== GAME OVER ===")
-                    self.canPlay = False
-                    self.stop_pushing_box_animation() # if any
-                    self.start_dying_animation()
-                
-                if self.heroPos == self.finishPos:
-                    print("=== YOU WIN ===")
-                    self.canPlay = False
-                    self.levelIndex += 1
-                    self.stop_pushing_box_animation() # if any
-                    self.start_new_level_animation()
-
             if self.recalculateLazerRays:
                 self.recalculate_lazer_rays()
                 self.recalculateLazerRays = False
             
+            if self.canPlay:
+                x, y = self.heroPos
+                if self.level[y][x] & BITS_RAYS:
+                    self.end_playing(False)
+                elif self.heroPos == self.finishPos:
+                    self.end_playing(True)
+
             if self.redrawScene:
                 self.redraw_scene()
                 self.redrawScene = False
