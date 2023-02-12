@@ -40,11 +40,11 @@ def split_text_to_cell_map(text, cell_width = 4):
 #----------------------------------
 #  
 # [31 30 29 28 27 26 25 24][23 22 21 20 19 18 17 16][15 14 13 12 11 10  9  8][ 7  6  5  4  3  2  1  0]
-#        [ color ;   dir  ;        letter          ]             [\  /  |  -]
-#        [                                         ]             [   RAYS   ]
-#        [            block name bits              ][                 property bits                  ]
-#        # used for drawing static objects;
-#        # 0 for boxes - BIT_BOX used instead;
+# [  index 2  ;  index 1  ;        letter          ][\  /  |  -]
+# [ e.g color ;  e.g. dir ;                        ][   RAYS   ]
+# [               block name bits                  ][                 property bits                  ]
+#      # used for drawing static objects;
+#      # 0 for boxes - BIT_BOX used instead;
 
 
 BIT_VISIBLE          = 1     #!!! needed?
@@ -55,51 +55,51 @@ BIT_BOX              = 1<<4
 BIT_BOX_BROKEN       = 1<<5
 BIT_TELEPORT         = 1<<6
 BIT_TELEPORT_SECOND  = 1<<7  # 0|1 - to easy find the second teleport
-#BIT_DYNAMIC          = 1<<7  # dynamic object    !!! needed?
-BIT_RAY0             = 1<<8  # shift 0..3 for  --  |  /  \
+BIT_DAMAGE           = 1<<8  # a damaging block (e.g. spike)
+BIT_RAY0             = 1<<12 # shift 0..3 for  --  |  /  \
 BITS_RAYS            = (BIT_RAY0 << 0) | (BIT_RAY0 << 1) | (BIT_RAY0 << 2) | (BIT_RAY0 << 3)
 
 BITS_WALL       = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE
-#BITS_FINISH     = BIT_VISIBLE | BIT_NEEDS_BG
-#BITS_FINISH     = BIT_VISIBLE
-BITS_ICE        = BIT_VISIBLE | BIT_SOLID
+BITS_GLASS      = BIT_VISIBLE | BIT_SOLID
 BITS_LASER      = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE
-BITS_ICELASER   = BIT_VISIBLE | BIT_SOLID
+BITS_GLASSLASER = BIT_VISIBLE | BIT_SOLID
 BITS_BOX        = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE | BIT_BOX
-#BITS_BOX_BROKEN = BIT_VISIBLE |                          BIT_BOX_BROKEN
 BITS_TELEPORT   = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE | BIT_TELEPORT
+BITS_SPIKE      = BIT_VISIBLE                          | BIT_DAMAGE
 
 PROPERTY_BITS_MAP = {    # block name letter => property bits
     "W": BITS_WALL,
-    #"F": BITS_FINISH,
-    "I": BITS_ICE,
+    "G": BITS_GLASS,
     "L": BITS_LASER,
-    "J": BITS_ICELASER,
+    "J": BITS_GLASSLASER,
     "B": BITS_BOX,
     "A": BITS_WALL,         # Arrow (dynamic blocks)
     "T": BITS_TELEPORT,
+    "S": BITS_SPIKE,
 }
 
 BLOCK_NAME_SHIFT        = 16
-BLOCK_NAME_SHIFT_DIR    = 16 + 8
-BLOCK_NAME_SHIFT_COLOR  = 16 + 8 + 3
-BLOCK_NAME_MASK         = 0x3FFF << BLOCK_NAME_SHIFT  # 3 bits for color, 3 bits for direction, 8 bits for a letter
-BLOCK_NAME_MASK2        =  0x7FF << BLOCK_NAME_SHIFT  #                   3 bits for direction, 8 bits for a letter
-
-CELLSIZE = 9  # in pixels
+BLOCK_NAME_MASK         = 0xFFFF << BLOCK_NAME_SHIFT
+BLOCK_NAME_MASK_INDEX1  = 0x0F00 << BLOCK_NAME_SHIFT
+BLOCK_NAME_MASK_INDEX2  = 0xF000 << BLOCK_NAME_SHIFT
 
 def block_name_to_tuple(name):
-    return name[0], int(name[1:] or "0"), 0
-def block_tuple_to_bits(letter, direction, color):
-    nameBits  = ord(letter) << BLOCK_NAME_SHIFT
-    nameBits |=   direction << BLOCK_NAME_SHIFT_DIR
-    nameBits |=       color << BLOCK_NAME_SHIFT_COLOR
+    name += "00"
+    return name[0], int(name[1]), int(name[2])
+def block_tuple_to_bits(letter, index1, index2):
+    nameBits  = ord(letter) <<  BLOCK_NAME_SHIFT
+    nameBits |=      index1 << (BLOCK_NAME_SHIFT + 8)
+    nameBits |=      index2 << (BLOCK_NAME_SHIFT + 8+4)
     return nameBits
-def get_bits_dir(bits):
-    return (bits >> BLOCK_NAME_SHIFT_DIR) & 0x7
-def get_bits_color(bits):
-    return (bits >> BLOCK_NAME_SHIFT_COLOR) & 0x7
+def get_bits_letter(bits):
+    return chr((bits >> BLOCK_NAME_SHIFT) & 0xFF)
+def get_bits_index1(bits):
+    return     (bits >> (BLOCK_NAME_SHIFT + 8)) & 0xF
+def get_bits_index2(bits):
+    return     (bits >> (BLOCK_NAME_SHIFT + 8+4)) & 0xF
 
+
+CELLSIZE = 9  # in pixels
 
 def create_image_areas(text, cell_width = 4):
     """Result map: block name bits => image area"""
@@ -112,17 +112,17 @@ def create_image_areas(text, cell_width = 4):
 
 # block name bits => area
 BLOCK_AREAS = create_image_areas("""
-H0  H1  H2  H3                  
-H4  H5  H6  H7                  
-S   W   F   I               T0  
-L0  L2  L1  L3              T1  
-L6  L5  L7  L4              T3  
-B0  B1                      T2  
-A7  A5  A4  A6                  
-A2  A0  A1  A3                  
+H0  H1  H2  H3                          
+H4  H5  H6  H7   
+-   W   F   G   S30 S31 S33 S15 S14 S13 
+L0  L2  L1  L3  S00 S32 S34 S25 S12 S11 
+L6  L5  L7  L4  S01 S02 S35 S24 S22 S10 
+B0  B1          S03 S04 S05 S23 S21 S20 
+A7  A5  A4  A6  T0  T1  T3  T2  
+A2  A0  A1  A3  C0  C1  C2  C3  
 J2  J1  J3  J0                  
 J6  J5  J7  J4                  
-R1  R0  R2  R3  C1  C2  C3      
+R1  R0  R2  R3                  
 """)
 
 
@@ -140,21 +140,21 @@ W   W   W   W   W   W
 {   'name': "temp", 
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   W   W
-W   F                   i       T12             W
-W                                               W
+W   F                   i                       W
+W                               T32             W
 L0          J3                  B               W
 W                                               W
-W       I                                       L1
+W       G                                       L1
 W                       j                       W
 W   B   B                   B                   W
 W                   T02                         W
 W           W   H                               W
-W                                               W
+W                                       S12 S11 W
 W               B                               W
-W                   T01         T11 B           W
-W                                               W
-W                                               W
-W                                               W
+W                   T01         T11 T03         W
+W                                           S25 W
+W                               T13         S24 W
+W                                           S23 W
 """,
     'dynamics': [
         ("ij", "A7", 500)
@@ -244,7 +244,7 @@ W   W   W   W   H   W
 
 ] # end of LEVELS
 
-LEVEL_TO_START = 5
+LEVEL_TO_START = 1
 LEVEL_TO_START = "temp"
 
 
@@ -267,15 +267,15 @@ KEY_DIRECTIONS = {  # key => index of DIRECTIONS
 class Animation:
     def __init__(self, name, time, proc):
         self.name = name  # used e.g. for stopping an animation by name
-        self.time = time  # ticks
+        self.time = time  # time to action
         self.proc = proc  # Animation -> void
         self.ended = False  # flag used to delete the animation
 
 class DynamicAnimation(Animation):
     def __init__(self, name, time, proc, nameBits, propertyBits, poses, delay):
         super().__init__(name, time, proc)
-        self.nameBits       = nameBits  # for drawing
-        self.propertyBits   = propertyBits  # for putting to cells
+        self.nameBits       = nameBits      # used for drawing
+        self.propertyBits   = propertyBits  # put into level cells (for lazer calculation etc)
         self.poses          = poses
         self.posIndex       = -1        # waiting for first frame
         self.delay          = delay     # ticks between frames
@@ -367,7 +367,7 @@ class BlueBallGame:
                         self.boxes.append((j, i))
                         cell |= BIT_BOX
                         addNameBits = False
-                    elif letter in "LJ":    # Laser or Ice laser
+                    elif letter in "LJ":    # Laser or Glass laser
                         lazer = Lazer(direction, (j, i))
                         self.lazers.append(lazer)
                     elif letter == "T":     # Teleport
@@ -418,16 +418,16 @@ class BlueBallGame:
         w, h = self.levelSize
         return 0 <= x < w and 0 <= y < h
     
-    def draw_block(self, pos, letter, direction = 0, color = 0):
-        nameBits = block_tuple_to_bits(letter, direction, color)
+    def draw_block(self, pos, letter, index1 = 0, index2 = 0):
+        nameBits = block_tuple_to_bits(letter, index1, index2)
         self.draw_block_by_bits(pos, nameBits)
-        
     def draw_block_by_bits(self, pos, nameBits):
         # draw background color if needed
-        color = get_bits_color(nameBits)
-        if color:
-            self.draw_block(pos, "C", direction = color)  # we use direction for color index here
-            nameBits = nameBits & BLOCK_NAME_MASK2  # remove color bits
+        letter = get_bits_letter(nameBits)
+        if letter in "T":
+            color = get_bits_index2(nameBits)          # using index2 as background color
+            self.draw_block(pos, "C", index1 = color)  # draw color block by color index
+            nameBits &= ~BLOCK_NAME_MASK_INDEX2        # remove color bit
         # draw the block (dir and letter bits only)
         area = BLOCK_AREAS.get(nameBits)
         if area:
@@ -443,10 +443,11 @@ class BlueBallGame:
         # Layer 1
         for (i,a) in enumerate(self.level):
          for (j,cell) in enumerate(a):
-         
+            # Draw background
+            #!!! Always? it needed for Finish, Broken box, Spike,.. Use some BIT_NEED_BG instead of BIT_VISIBLE...
+            self.draw_block((j,i), "-")
+
             # Draw specials by property bits
-            if not cell & BIT_VISIBLE:
-                self.draw_block((j,i), "S")     # just space
             if cell & BIT_FINISH:
                 self.draw_block((j,i), "F")     # Finish is like a space
             if cell & BIT_BOX_BROKEN:
@@ -559,9 +560,10 @@ class BlueBallGame:
     # dynamics
     def start_dynamic_block(self, nameBits, propertyBits, poses, delay):
         d = DynamicAnimation(
-            "dyn", self.ticks, self.proc_dynamic_block, 
+            "dyn",
+            self.ticks,  # action right now
+            self.proc_dynamic_block,
             nameBits,
-            #propertyBits | BIT_DYNAMIC, 
             propertyBits,
             poses, delay
         )
@@ -576,30 +578,75 @@ class BlueBallGame:
         if not self.currentFrameDynamics: return
         # remove from previous cell
         for d in self.currentFrameDynamics:
-            if d.posIndex == -1: continue
+            if d.posIndex == -1: continue  # not yet started
             (x,y) = d.poses[d.posIndex]
             self.level[y][x] &= ~d.propertyBits
         # put to next cell
         for d in self.currentFrameDynamics:
+            prevPos = d.poses[d.posIndex]
             d.posIndex += 1
             d.posIndex %= len(d.poses)
-            (x,y) = d.poses[d.posIndex]
-            
-            # check a box here
-            if self.level[y][x] & BIT_BOX:
-                self.level[y][x] &= ~BITS_BOX
-                self.level[y][x] |=  BIT_BOX_BROKEN  # single bit only
-            
-            # check the hero is here
-            if self.canPlay and self.heroPos == (x,y):
-                self.end_playing(False)
-            
-            self.level[y][x] |= d.propertyBits
-            
+            newPos = d.poses[d.posIndex]
+            step = sub(newPos, prevPos)
+            dirIndex = DIRECTIONS.index(step)
+            self.put_dynamic_to_next_cell(d, newPos, dirIndex)
         #
         self.currentFrameDynamics = []
         self.recalculateLazerRays = True
         self.redrawScene = True
+    def put_dynamic_to_next_cell(self, dyn, newPos, dirIndex):
+        if dyn.propertyBits & BIT_DAMAGE:
+            # check a box here
+            (x,y) = newPos
+            if self.level[y][x] & BIT_BOX:
+                self.level[y][x] &= ~BITS_BOX        # erase the box
+                self.level[y][x] |=  BIT_BOX_BROKEN  # single bit only
+            # check the hero is here
+            elif self.canPlay and self.heroPos == (x,y):
+                self.end_playing(win = False)
+        else:
+            # collect items to move (player, boxes,..)
+            items = []  # list of tuples (position, -1 for box or hero index 0..)
+            move = False  # move (if space behind) or crash (the first item, if no space)
+            p = newPos
+            d = dirIndex
+            while True:
+                (x,y) = p
+                bits = self.level[y][x]
+                if self.canPlay and self.heroPos == p:
+                    items.append((p,0))
+                elif bits & BIT_BOX:
+                    items.append((p,-1))
+                else:
+                    items.append((p,-2))  # last cell (space)
+                    move = not (bits & BIT_SOLID)  # move (if space) or crash (if solid)
+                    break
+                p, _, d = self.get_next_cell(p, d)
+            # move (or crash) the items if any
+            if len(items) > 1:
+                if move:
+                    for (i0,i1) in reversed(list(zip(items, items[1:]))):
+                        (x0,y0),i = i0
+                        (x1,y1),_ = i1
+                        damage = self.level[y1][x1] & BIT_DAMAGE
+                        if i == -1:  # a box
+                            self.level[y0][x0] &= ~BITS_BOX
+                            if damage:
+                                self.level[y1][x1] |= BIT_BOX_BROKEN
+                            else:
+                                self.level[y1][x1] |= BITS_BOX
+                        elif i == 0:  # hero
+                            self.heroPos = (x1,y1)  # damage bit will be checked later
+                else:  # crash (the first item)
+                    (x,y),i = items[0]
+                    if i == -1:  # a box
+                        self.level[y][x] &= ~BITS_BOX
+                        self.level[y][x] |=  BIT_BOX_BROKEN
+                    elif i == 0:
+                        if self.canPlay:
+                            self.end_playing(win = False)
+        (x,y) = newPos
+        self.level[y][x] |= dyn.propertyBits
 
     
     def get_next_cell(self, pos, dirIndex, allowTeleport = True):
@@ -609,13 +656,13 @@ class BlueBallGame:
         
         if allowTeleport:
             while bits & BIT_TELEPORT:  # there may be few steps like    -> [0 ]     [ 0][O ]     [ O] ->
-                d = get_bits_dir(bits)
-                c = get_bits_color(bits)
+                d = get_bits_index1(bits)  # direction
+                c = get_bits_index2(bits)  # color
                 if d == dirIndex:  # can enter the teleport
                     i = (bits & BIT_TELEPORT_SECOND) and 1 or 0
                     (xT,yT) = self.teleports[c][i ^ 1]  # pos of other teleport
                     bitsT = self.level[yT][xT]
-                    dirIndex = get_bits_dir(bitsT) ^ 1  # step out
+                    dirIndex = get_bits_index1(bitsT) ^ 1  # step out
                     newPos = (x,y) = add((xT,yT), DIRECTIONS[dirIndex])
                     if not self.in_level(newPos): return (None,None,None)
                     bits = self.level[y][x]
@@ -683,13 +730,12 @@ class BlueBallGame:
                 # window size?
                 elif e.type == pygame.KEYDOWN:
                     if self.canPlay:
-                        dirIndex = KEY_DIRECTIONS.get(e.key, -1)  # 0..3
+                        dirIndex = KEY_DIRECTIONS.get(e.key, -1)  # => 0..3
                         if dirIndex != -1:
                             self.handle_hero_step(dirIndex)
 
             # Process all animations (remove ended ones)
             self.process_animations()  # animation procs called here
-
             self.process_current_frame_dynamics()
 
             if self.recalculateLazerRays:
@@ -698,10 +744,10 @@ class BlueBallGame:
             
             if self.canPlay:
                 x, y = self.heroPos
-                if self.level[y][x] & BITS_RAYS:
-                    self.end_playing(False)
+                if self.level[y][x] & BITS_RAYS or self.level[y][x] & BIT_DAMAGE:
+                    self.end_playing(win = False)
                 elif self.heroPos == self.finishPos:
-                    self.end_playing(True)
+                    self.end_playing(win = True)
 
             if self.redrawScene:
                 self.redraw_scene()
