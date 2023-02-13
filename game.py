@@ -50,12 +50,13 @@ def split_text_to_cell_map(text, cell_width = 4):
 BIT_VISIBLE          = 1     #!!! needed?
 BIT_SOLID            = 1<<1
 BIT_OPAQUE           = 1<<2
-BIT_FINISH           = 1<<3  # to mark finish cell (it stays "invisible")
-BIT_BOX              = 1<<4
-BIT_BOX_BROKEN       = 1<<5
-BIT_TELEPORT         = 1<<6
-BIT_TELEPORT_SECOND  = 1<<7  # 0|1 - to easy find the second teleport
-BIT_DAMAGE           = 1<<8  # a damaging block (e.g. spike)
+BIT_START            = 1<<3  # start or respawn cell (it stays "invisible")
+BIT_FINISH           = 1<<4  # to mark finish cell   (it stays "invisible")
+BIT_BOX              = 1<<5
+BIT_BOX_BROKEN       = 1<<6
+BIT_TELEPORT         = 1<<7
+BIT_TELEPORT_SECOND  = 1<<8  # to easy find the second teleport
+BIT_DAMAGE           = 1<<9  # a damaging block (e.g. spike)
 BIT_RAY0             = 1<<12 # shift 0..3 for  --  |  /  \
 BITS_RAYS            = (BIT_RAY0 << 0) | (BIT_RAY0 << 1) | (BIT_RAY0 << 2) | (BIT_RAY0 << 3)
 
@@ -85,7 +86,7 @@ BLOCK_NAME_MASK_INDEX2  = 0xF000 << BLOCK_NAME_SHIFT
 
 def block_name_to_tuple(name):
     name += "00"
-    return name[0], int(name[1]), int(name[2])
+    return name[0], int(name[1], 16), int(name[2], 16)
 def block_tuple_to_bits(letter, index1, index2):
     nameBits  = ord(letter) <<  BLOCK_NAME_SHIFT
     nameBits |=      index1 << (BLOCK_NAME_SHIFT + 8)
@@ -117,11 +118,11 @@ H4  H5  H6  H7
 -   W   F   G   S30 S31 S33 S15 S14 S13 
 L0  L2  L1  L3  S00 S32 S34 S25 S12 S11 
 L6  L5  L7  L4  S01 S02 S35 S24 S22 S10 
-B0  B1          S03 S04 S05 S23 S21 S20 
+B0  B1  *       S03 S04 S05 S23 S21 S20 
 A7  A5  A4  A6  T0  T1  T3  T2  
 A2  A0  A1  A3  C0  C1  C2  C3  
-J2  J1  J3  J0                  
-J6  J5  J7  J4                  
+J2  J1  J3  J0  C4  C5  C6  C7  
+J6  J5  J7  J4  C8  C9  CA  CB  
 R1  R0  R2  R3                  
 """)
 
@@ -140,15 +141,15 @@ W   W   W   W   W   W
 {   'name': "temp", 
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   W   W
-W   F                   i                       W
-W                               T32             W
+W   F                   i                   H2  W
+W                               T3B             W
 L0          J3                  B               W
 W                                               W
 W       G                                       L1
 W                       j                       W
 W   B   B                   B                   W
-W                   T02                         W
-W           W   H                               W
+W                   T0B                         W
+W           W   H0                          H1  W
 W                                       S12 S11 W
 W               B                               W
 W                   T01         T11 T03         W
@@ -298,6 +299,9 @@ class BlueBallGame:
         for (i,level) in enumerate(LEVELS):
             if level["name"] == LEVEL_TO_START:
                 self.levelIndex = i
+        
+        self.startIndex = 0  # index of start position to respawn
+        self.switchLevel = False  # switching to next level (resetting self.startIndex)
         self.reloadLevel = False  # used to trigger level reloading (including animations) out of process_animations call
         self.load_level()
     
@@ -306,15 +310,16 @@ class BlueBallGame:
         cellsText = split_text_to_cells(levelDict['map'])
         w, h = len(cellsText[0]), len(cellsText)
         
-        cells = [[None]*w for _ in range(h)]  # [i][j] => (letter, direction, color) or None
+        cells = [[None]*w for _ in range(h)]  # [i][j] => (letter, index1, index2) or None
         aliases = {}                          # cell alias => (i,j)
         
+        cellRe = re.compile(r'^([A-Z]?)([0-9A-F]?)([0-9A-F]?)([a-z]?)$')
         for (i,row) in enumerate(cellsText):
          for (j,cellText) in enumerate(row):
             if cellText:
-                (letter, direction, color, alias) = re.match(r'^([A-Z]?)([0-9]?)([0-9]?)([a-z]?)$', cellText).groups()
+                (letter, index1, index2, alias) = cellRe.match(cellText).groups()
                 if letter:
-                    cells[i][j] = (letter, int(direction or "0"), int(color or "0"))
+                    cells[i][j] = (letter, int(index1 or "0", 16), int(index2 or "0", 16))
                 if alias:
                     aliases[alias] = (j,i)
         
@@ -329,6 +334,11 @@ class BlueBallGame:
         return ((w, h), cells, dynamics)
     
     def load_level(self):
+        if self.switchLevel:
+            self.levelIndex += 1
+            self.startIndex  = 0
+            self.switchLevel = False
+    
         if self.levelIndex == len(LEVELS): raise "CONGRATULATIONS!"
     
         (w, h), mapCells, dynamics = self.parse_level(LEVELS[self.levelIndex])
@@ -337,6 +347,7 @@ class BlueBallGame:
         self.levelSurface = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
         self.ticks = pygame.time.get_ticks()  # current time in ms (already needed for starting animations)
 
+        self.startPoses = []  # poses to respawn
         self.finishPos = None
         self.heroPos = None
         self.heroState = 0  # index of skin
@@ -353,30 +364,34 @@ class BlueBallGame:
         for (i,row) in enumerate(mapCells):
          for (j,blockValues) in enumerate(row):
             if blockValues:
-                letter, direction, color = blockValues
+                letter, index1, index2 = blockValues
                 cell = 0
-                addNameBits = True
-                if letter == "H":           # Hero
-                    self.heroPos = (j, i)
-                else:
-                    if letter == "F":       # Finish: special case - draw by BIT_FINISH
-                        self.finishPos = (j, i)
-                        cell |= BIT_FINISH
-                        addNameBits = False
-                    elif letter == "B":     # Box: special case - draw by BIT_BOX
-                        self.boxes.append((j, i))
-                        cell |= BIT_BOX
-                        addNameBits = False
-                    elif letter in "LJ":    # Laser or Glass laser
-                        lazer = Lazer(direction, (j, i))
-                        self.lazers.append(lazer)
-                    elif letter == "T":     # Teleport
-                        ts = self.teleports[color]
-                        if ts: cell |= BIT_TELEPORT_SECOND  # 1 for the second teleport of this color
-                        ts.append((j, i))
-                    if addNameBits:  # no special bits were set - means regular static object - add block name bits for drawing
-                        cell |= block_tuple_to_bits(letter, direction, color)
-                    cell |= PROPERTY_BITS_MAP.get(letter, 0)
+                addNameBits = True      # False for cells drawn by property bits
+                if letter == "H":       # Hero rewpawn pos
+                    while len(self.startPoses) <= index1: self.startPoses.append(None)  #!!! use some defaultlist instead
+                    self.startPoses[index1] = (j, i)
+                    if index1 == self.startIndex:
+                        self.heroPos = (j, i)
+                    cell |= BIT_START
+                    addNameBits = False
+                elif letter == "F":     # Finish: special case - draw by BIT_FINISH
+                    self.finishPos = (j, i)
+                    cell |= BIT_FINISH
+                    addNameBits = False
+                elif letter == "B":     # Box: special case - draw by BIT_BOX
+                    self.boxes.append((j, i))
+                    cell |= BIT_BOX
+                    addNameBits = False
+                elif letter in "LJ":    # Laser or Glass laser
+                    lazer = Lazer(direction = index1, staticPos = (j, i))
+                    self.lazers.append(lazer)
+                elif letter == "T":     # Teleport
+                    ts = self.teleports[index2]
+                    if ts: cell |= BIT_TELEPORT_SECOND  # 1 for the second teleport of this color
+                    ts.append((j, i))
+                if addNameBits:  # no special bits were set - means regular static object - add block name bits for drawing
+                    cell |= block_tuple_to_bits(letter, index1, index2)
+                cell |= PROPERTY_BITS_MAP.get(letter, 0)
                 self.level[i][j] = cell
 
         # Start dynamic animations
@@ -448,6 +463,8 @@ class BlueBallGame:
             self.draw_block((j,i), "-")
 
             # Draw specials by property bits
+            if cell & BIT_START:
+                self.draw_block((j,i), "*")     # Start is like a space
             if cell & BIT_FINISH:
                 self.draw_block((j,i), "F")     # Finish is like a space
             if cell & BIT_BOX_BROKEN:
@@ -666,6 +683,8 @@ class BlueBallGame:
                     newPos = (x,y) = add((xT,yT), DIRECTIONS[dirIndex])
                     if not self.in_level(newPos): return (None,None,None)
                     bits = self.level[y][x]
+                else:
+                    break  # can't enter - just like a solid block
         
         return (newPos, bits, dirIndex)
 
@@ -705,7 +724,8 @@ class BlueBallGame:
             self.recalculateLazerRays = True
             self.redrawScene = True
             #
-            self.levelIndex += 1  #!!! use some self.switchLevel instead
+            self.switchLevel = True
+            #self.levelIndex += 1  #!!! use some self.switchLevel instead
             self.stop_pushing_box_animation() # if any
             self.start_new_level_animation()
         else:
@@ -743,11 +763,13 @@ class BlueBallGame:
                 self.recalculateLazerRays = False
             
             if self.canPlay:
-                x, y = self.heroPos
+                (x,y) = self.heroPos
                 if self.level[y][x] & BITS_RAYS or self.level[y][x] & BIT_DAMAGE:
                     self.end_playing(win = False)
                 elif self.heroPos == self.finishPos:
                     self.end_playing(win = True)
+                elif self.heroPos in self.startPoses:
+                    self.startIndex = self.startPoses.index(self.heroPos)  # save pos to respawn
 
             if self.redrawScene:
                 self.redraw_scene()
