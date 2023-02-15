@@ -153,12 +153,13 @@ W           W   H0                          H1  W
 W                                       S12 S11 W
 W               B                               W
 W                   T01         T11 T03         W
-W                                           S25 W
+T1A k               T0A                     S25 W
 W                               T13         S24 W
 W                                           S23 W
 """,
     'dynamics': [
-        ("ij", "A7", 500)
+        ("ij", "A7", 500),
+        ("k0", "W", 500),
     ]
 },
 
@@ -273,13 +274,17 @@ class Animation:
         self.ended = False  # flag used to delete the animation
 
 class DynamicAnimation(Animation):
-    def __init__(self, name, time, proc, nameBits, propertyBits, poses, delay):
+    def __init__(self, name, time, proc, nameBits, propertyBits, delay, poses, direction = None):
         super().__init__(name, time, proc)
         self.nameBits       = nameBits      # used for drawing
         self.propertyBits   = propertyBits  # put into level cells (for lazer calculation etc)
-        self.poses          = poses
-        self.posIndex       = -1        # waiting for first frame
-        self.delay          = delay     # ticks between frames
+        self.delay          = delay         # ticks between frames
+        self.currentPos     = None          # current pos, None before first frame
+        #
+        self.poses          = poses         # single pos for 'by direction'
+        self.posIndex       = -1            # -1 for 'by direction' or when not started
+        #
+        self.direction      = direction     # None when moving by poses list
 
 class Lazer:
     def __init__(self, direction, staticPos = None, dynamic = None):
@@ -323,11 +328,14 @@ class BlueBallGame:
                 if alias:
                     aliases[alias] = (j,i)
         
-        dynamics = []  # [([poses], [[block names]], delay)]
-        for (cellAliases, blockNames, delay) in levelDict.get('dynamics', ()):
+        dynamics = []  # [([poses], direction, [[block names]], delay)]
+        locationsRe = re.compile(r'^([a-z]+)([0-3]?)$')
+        for (locations, blockNames, delay) in levelDict.get('dynamics', ()):
+            (aa, d) = locationsRe.match(locations).groups()
             dynamics.append((
-                tuple(aliases[a] for a in cellAliases),
-                [re.findall(r'[A-Z][0-9]?', r) for r in blockNames.split("/")],
+                tuple(aliases[a] for a in aa),  # key poses
+                int(d) if d else None,          # direction
+                [re.findall(r'[A-Z][0-9]?', r) for r in blockNames.split("/")],  # 2D list of block names
                 delay
             ))
         
@@ -395,36 +403,40 @@ class BlueBallGame:
                 self.level[i][j] = cell
 
         # Start dynamic animations
-        for (poses, blocks, delay) in dynamics:
-            self.start_dynamic_animation(poses, blocks, delay)
+        for (poses, direction, blocks, delay) in dynamics:
+            self.start_dynamic_animation(poses, direction, blocks, delay)
         
         self.recalculateLazerRays = True  # recalculate lazer ray bits
         self.redrawScene = True
         self.canPlay = True  # False on level ending (when just waiting for final animations end)
     
-    def start_dynamic_animation(self, keyPoses, blocks, delay):
-        poses = []  # collect all poses (from key poses)
+    def start_dynamic_animation(self, keyPoses, direction, blocks, delay):
+        poses = []   # collect all poses (from key poses)
         pc = len(keyPoses)
-        for i in range(pc):
-            (x0,y0), (x1,y1) = keyPoses[i], keyPoses[(i+1)%pc]
-            if y0 == y1:  # horizontal
-                poses += [(x,y0) for x in range(x0, x1, x0 < x1 and 1 or -1)]
-            elif x0 == x1:  # vertical
-                poses += [(x0,y) for y in range(y0, y1, y0 < y1 and 1 or -1)]
-            else:
-                raise "invalid dynamic"
+        if pc == 1:  # moving by direction
+            if direction is None: raise "invalid dynamic by direction"
+            poses.append(keyPoses[0])
+        else:        # moving by key poses
+            for i in range(pc):
+                (x0,y0), (x1,y1) = keyPoses[i], keyPoses[(i+1)%pc]
+                if y0 == y1:  # horizontal
+                    poses += [(x,y0) for x in range(x0, x1, x0 < x1 and 1 or -1)]
+                elif x0 == x1:  # vertical
+                    poses += [(x0,y) for y in range(y0, y1, y0 < y1 and 1 or -1)]
+                else:
+                    raise "invalid dynamic"
         # Now start dynamic for each block in 2d array
         for (i,row) in enumerate(blocks):
          for (j,blockName) in enumerate(row):
-            (letter, direction, color) = block_name_to_tuple(blockName)
+            (letter, i1, i2) = block_name_to_tuple(blockName)
             d = self.start_dynamic_block(
-                block_tuple_to_bits(letter, direction, color),
+                block_tuple_to_bits(letter, i1, i2),
                 PROPERTY_BITS_MAP[letter],
-                [add(p, (j,i)) for p in poses], 
-                delay
+                delay,
+                [add(p, (j,i)) for p in poses], direction
             )
-            if letter in "LJ":
-                lazer = Lazer(direction, dynamic = d)
+            if letter in "LJ":  # lazer or glass lazer
+                lazer = Lazer(direction = i1, dynamic = d)
                 self.lazers.append(lazer)
 
     
@@ -482,8 +494,7 @@ class BlueBallGame:
         # dynamic objects
         for a in self.animations:
             if a.name == "dyn":
-                pos = a.poses[a.posIndex]
-                self.draw_block_by_bits(pos, a.nameBits)
+                self.draw_block_by_bits(a.currentPos, a.nameBits)
 
         # Layer 2
         for (i,a) in enumerate(self.level):
@@ -513,7 +524,7 @@ class BlueBallGame:
             for lazer in self.lazers:
                 ray = lazer.direction >> 1  # 0..3: - | / \
                 step = DIRECTIONS[lazer.direction]
-                pos = lazer.staticPos or lazer.dynamic.poses[lazer.dynamic.posIndex]
+                pos = lazer.staticPos or lazer.dynamic.currentPos
                 while True:
                     pos = (x,y) = add(pos, step)
                     if not self.in_level(pos): break
@@ -575,14 +586,15 @@ class BlueBallGame:
         a.ended = True
 
     # dynamics
-    def start_dynamic_block(self, nameBits, propertyBits, poses, delay):
+    def start_dynamic_block(self, nameBits, propertyBits, delay, poses, direction):
         d = DynamicAnimation(
             "dyn",
             self.ticks,  # action right now
             self.proc_dynamic_block,
             nameBits,
             propertyBits,
-            poses, delay
+            delay,
+            poses, direction
         )
         self.animations.append(d)
         return d
@@ -595,26 +607,34 @@ class BlueBallGame:
         if not self.currentFrameDynamics: return
         # remove from previous cell
         for d in self.currentFrameDynamics:
-            if d.posIndex == -1: continue  # not yet started
-            (x,y) = d.poses[d.posIndex]
+            if d.currentPos is None: continue  # not yet started
+            (x,y) = d.currentPos
             self.level[y][x] &= ~d.propertyBits
         # put to next cell
         for d in self.currentFrameDynamics:
-            prevPos = d.poses[d.posIndex]
-            d.posIndex += 1
-            d.posIndex %= len(d.poses)
-            newPos = d.poses[d.posIndex]
-            step = sub(newPos, prevPos)
-            dirIndex = DIRECTIONS.index(step)
-            self.put_dynamic_to_next_cell(d, newPos, dirIndex)
+            dirIndex = None
+            if d.direction is None:     # move by poses
+                prevPos = d.poses[d.posIndex]
+                d.posIndex += 1
+                d.posIndex %= len(d.poses)
+                d.currentPos = d.poses[d.posIndex]
+                step = sub(d.currentPos, prevPos)
+                dirIndex = DIRECTIONS.index(step)
+            else:                       # move by direction
+                if d.currentPos is None:
+                    d.currentPos = d.poses[0]
+                    dirIndex = d.direction
+                else:
+                    d.currentPos, dirIndex, _ = self.get_next_cell(d.currentPos, d.direction)
+            self.put_dynamic_to_next_cell(d, dirIndex)
         #
         self.currentFrameDynamics = []
         self.recalculateLazerRays = True
         self.redrawScene = True
-    def put_dynamic_to_next_cell(self, dyn, newPos, dirIndex):
+    def put_dynamic_to_next_cell(self, dyn, dirIndex):
         if dyn.propertyBits & BIT_DAMAGE:
             # check a box here
-            (x,y) = newPos
+            (x,y) = dyn.currentPos
             if self.level[y][x] & BIT_BOX:
                 self.level[y][x] &= ~BITS_BOX        # erase the box
                 self.level[y][x] |=  BIT_BOX_BROKEN  # single bit only
@@ -625,7 +645,7 @@ class BlueBallGame:
             # collect items to move (player, boxes,..)
             items = []  # list of tuples (position, -1 for box or hero index 0..)
             move = False  # move (if space behind) or crash (the first item, if no space)
-            p = newPos
+            p = dyn.currentPos
             d = dirIndex
             while True:
                 (x,y) = p
@@ -638,7 +658,7 @@ class BlueBallGame:
                     items.append((p,-2))  # last cell (space)
                     move = not (bits & BIT_SOLID)  # move (if space) or crash (if solid)
                     break
-                p, _, d = self.get_next_cell(p, d)
+                p, d, _ = self.get_next_cell(p, d)
             # move (or crash) the items if any
             if len(items) > 1:
                 if move:
@@ -662,7 +682,7 @@ class BlueBallGame:
                     elif i == 0:
                         if self.canPlay:
                             self.end_playing(win = False)
-        (x,y) = newPos
+        (x,y) = dyn.currentPos
         self.level[y][x] |= dyn.propertyBits
 
     
@@ -686,12 +706,12 @@ class BlueBallGame:
                 else:
                     break  # can't enter - just like a solid block
         
-        return (newPos, bits, dirIndex)
+        return (newPos, dirIndex, bits)
 
 
     def handle_hero_step(self, dirIndex):
         
-        newPos, bits, dirIndex = self.get_next_cell(self.heroPos, dirIndex)
+        newPos, dirIndex, bits = self.get_next_cell(self.heroPos, dirIndex)
         if newPos is None: return
         
         if not bits & BIT_SOLID:
@@ -700,7 +720,7 @@ class BlueBallGame:
             self.redrawScene = True
         
         elif bits & BIT_BOX:  # box. can we move it?
-            newPos2, bits2, dirIndex2 = self.get_next_cell(newPos, dirIndex)
+            newPos2, dirIndex2, bits2 = self.get_next_cell(newPos, dirIndex)
             if newPos2 is None: return
             
             if not bits2 & BIT_SOLID:  # we can move it
