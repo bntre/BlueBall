@@ -113,8 +113,8 @@ def create_image_areas(text, cell_width = 4):
 
 # block name bits => area
 BLOCK_AREAS = create_image_areas("""
-H0  H1  H2  H3                          
-H4  H5  H6  H7   
+H0  H1  H2  H3  D0  D1  D2  D3          
+H4  H5  H6  H7  D4  D5  D6  D7          
 -   W   F   G   S30 S31 S33 S15 S14 S13 
 L0  L2  L1  L3  S00 S32 S34 S25 S12 S11 
 L6  L5  L7  L4  S01 S02 S35 S24 S22 S10 
@@ -156,6 +156,7 @@ W                   T01         T11 T03         W
 T1A k               T0A                     S25 W
 W                               T13         S24 W
 W                                           S23 W
+W               D                               W
 """,
     'dynamics': [
         ("ij", "A7", 500),
@@ -283,7 +284,6 @@ class DynamicAnimation(Animation):
         #
         self.poses          = poses         # single pos for 'by direction'
         self.posIndex       = -1            # -1 for 'by direction' or when not started
-        #
         self.direction      = direction     # None when moving by poses list
 
 class Lazer:
@@ -355,16 +355,16 @@ class BlueBallGame:
         self.levelSurface = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
         self.ticks = pygame.time.get_ticks()  # current time in ms (already needed for starting animations)
 
-        self.startPoses = []  # poses to respawn
+        self.startPoses = []    # poses to respawn
         self.finishPos = None
-        self.heroPos = None
-        self.heroState = 0  # index of skin
-        self.boxes = []  # list of positions
-        self.lazers = []  # list of Lazer objects
-        self.lazersOn = True  # we turn them off when hero reach the finish
+        self.heroPoses = [None] # first one for hero, others for doubles
+        self.heroState = 0      # index of hero skin (0 for normal, others for dying)
+        self.boxes = []         # list of positions
+        self.lazers = []        # list of Lazer objects
+        self.lazersOn = True    # we turn them off when hero reach the finish
         self.teleports = defaultdict(list)  # teleport color => [(x,y), (x,y)] - both teleport poses
         
-        self.animations = []  # list of Animation objects
+        self.animations = []    # list of Animation objects
         self.currentFrameDynamics = []  # used to process all current frame dynamic animations at once
 
         # Fill level cell integers
@@ -379,8 +379,11 @@ class BlueBallGame:
                     while len(self.startPoses) <= index1: self.startPoses.append(None)  #!!! use some defaultlist instead
                     self.startPoses[index1] = (j, i)
                     if index1 == self.startIndex:
-                        self.heroPos = (j, i)
+                        self.heroPoses[0] = (j, i)
                     cell |= BIT_START
+                    addNameBits = False
+                elif letter == "D":     # A Double
+                    self.heroPoses.append((j, i))
                     addNameBits = False
                 elif letter == "F":     # Finish: special case - draw by BIT_FINISH
                     self.finishPos = (j, i)
@@ -489,7 +492,10 @@ class BlueBallGame:
         
         # hero
         if self.heroState < 8:  #!!! 8 for hidden
-            self.draw_block(self.heroPos, "H", self.heroState)
+            self.draw_block(self.heroPoses[0], "H", self.heroState)
+            for doublePos in self.heroPoses[1:]:
+                if doublePos != self.heroPoses[0]:  #!!! annihilation?
+                    self.draw_block(doublePos, "D", self.heroState)
         
         # dynamic objects
         for a in self.animations:
@@ -639,47 +645,46 @@ class BlueBallGame:
                 self.level[y][x] &= ~BITS_BOX        # erase the box
                 self.level[y][x] |=  BIT_BOX_BROKEN  # single bit only
             # check the hero is here
-            elif self.canPlay and self.heroPos == (x,y):
+            elif self.canPlay and (x,y) in self.heroPoses:
                 self.end_playing(win = False)
         else:
             # collect items to move (player, boxes,..)
-            items = []  # list of tuples (position, -1 for box or hero index 0..)
+            items = []  # list of tuples (position, [indices]) where index -1 for box or hero index 0,1..
             move = False  # move (if space behind) or crash (the first item, if no space)
             p = dyn.currentPos
             d = dirIndex
             while True:
                 (x,y) = p
                 bits = self.level[y][x]
-                if self.canPlay and self.heroPos == p:
-                    items.append((p,0))
+                if self.canPlay and p in self.heroPoses:
+                    items.append((p, [i for (i,h) in enumerate(self.heroPoses) if h == p]))
                 elif bits & BIT_BOX:
-                    items.append((p,-1))
+                    items.append((p, [-1]))
                 else:
-                    items.append((p,-2))  # last cell (space)
+                    items.append((p, []))  # last cell (space)
                     move = not (bits & BIT_SOLID)  # move (if space) or crash (if solid)
                     break
                 p, d, _ = self.get_next_cell(p, d)
             # move (or crash) the items if any
             if len(items) > 1:
                 if move:
-                    for (i0,i1) in reversed(list(zip(items, items[1:]))):
-                        (x0,y0),i = i0
-                        (x1,y1),_ = i1
-                        damage = self.level[y1][x1] & BIT_DAMAGE
-                        if i == -1:  # a box
-                            self.level[y0][x0] &= ~BITS_BOX
-                            if damage:
-                                self.level[y1][x1] |= BIT_BOX_BROKEN
-                            else:
-                                self.level[y1][x1] |= BITS_BOX
-                        elif i == 0:  # hero
-                            self.heroPos = (x1,y1)  # damage bit will be checked later
-                else:  # crash (the first item)
-                    (x,y),i = items[0]
+                    for (c0,c1) in reversed(list(zip(items, items[1:]))):
+                        (x0,y0),indices = c0
+                        (x1,y1),_       = c1
+                        damaged = self.level[y1][x1] & BIT_DAMAGE
+                        for i in indices:
+                            if i == -1:  # a box
+                                self.level[y0][x0] &= ~BITS_BOX
+                                self.level[y1][x1] |= damaged and BIT_BOX_BROKEN or BITS_BOX
+                            elif i >= 0:  # hero
+                                self.heroPoses[i] = (x1,y1)  # damage bit will be checked later
+                else:  # no space to move - crash the first item
+                    (x,y),indices = items[0]
+                    i = indices[0]  # first index is enough to check
                     if i == -1:  # a box
                         self.level[y][x] &= ~BITS_BOX
                         self.level[y][x] |=  BIT_BOX_BROKEN
-                    elif i == 0:
+                    elif i >= 0:
                         if self.canPlay:
                             self.end_playing(win = False)
         (x,y) = dyn.currentPos
@@ -711,27 +716,29 @@ class BlueBallGame:
 
     def handle_hero_step(self, dirIndex):
         
-        newPos, dirIndex, bits = self.get_next_cell(self.heroPos, dirIndex)
-        if newPos is None: return
+        for i in range(len(self.heroPoses)):
         
-        if not bits & BIT_SOLID:
-            self.heroPos = newPos
-            #self.recalculateLazerRays = True
-            self.redrawScene = True
-        
-        elif bits & BIT_BOX:  # box. can we move it?
-            newPos2, dirIndex2, bits2 = self.get_next_cell(newPos, dirIndex)
-            if newPos2 is None: return
+            newPos, dirIndex, bits = self.get_next_cell(self.heroPoses[i], dirIndex)
+            if newPos is None: continue
             
-            if not bits2 & BIT_SOLID:  # we can move it
-                (x, y ) = newPos
-                (x2,y2) = newPos2
-                self.level[y ][x ] &= ~BITS_BOX  #!!! remove bits by global mask (not only BOX)
-                self.level[y2][x2] |=  BITS_BOX
-                self.heroPos = newPos
-                self.recalculateLazerRays = True
+            if not bits & BIT_SOLID:
+                self.heroPoses[i] = newPos
+                #self.recalculateLazerRays = True
                 self.redrawScene = True
-                self.start_pushing_box_animation()
+            
+            elif bits & BIT_BOX:  # box. can we move it?
+                newPos2, dirIndex2, bits2 = self.get_next_cell(newPos, dirIndex)
+                if newPos2 is None: continue
+                
+                if not bits2 & BIT_SOLID:  # we can move it
+                    (x, y ) = newPos
+                    (x2,y2) = newPos2
+                    self.level[y ][x ] &= ~BITS_BOX  #!!! remove bits by global mask (not only BOX)
+                    self.level[y2][x2] |=  BITS_BOX
+                    self.heroPoses[i] = newPos
+                    self.recalculateLazerRays = True
+                    self.redrawScene = True
+                    self.start_pushing_box_animation()
         
     
     def end_playing(self, win):
@@ -783,13 +790,14 @@ class BlueBallGame:
                 self.recalculateLazerRays = False
             
             if self.canPlay:
-                (x,y) = self.heroPos
-                if self.level[y][x] & BITS_RAYS or self.level[y][x] & BIT_DAMAGE:
-                    self.end_playing(win = False)
-                elif self.heroPos == self.finishPos:
+                for (x,y) in self.heroPoses:
+                    if self.level[y][x] & (BITS_RAYS | BIT_DAMAGE):
+                        self.end_playing(win = False)
+                heroPos = self.heroPoses[0]
+                if heroPos == self.finishPos:
                     self.end_playing(win = True)
-                elif self.heroPos in self.startPoses:
-                    self.startIndex = self.startPoses.index(self.heroPos)  # save pos to respawn
+                elif heroPos in self.startPoses:
+                    self.startIndex = self.startPoses.index(heroPos)  # save pos to respawn
 
             if self.redrawScene:
                 self.redraw_scene()
