@@ -3,6 +3,7 @@ import re
 import pygame
 from collections import defaultdict
 
+from levels import LEVELS
 
 #----------------------------------
 
@@ -126,130 +127,8 @@ J6  J5  J7  J4  C8  C9  CA  CB
 R1  R0  R2  R3                  
 """)
 
-
-LEVELS = [
-{   'name': 1, 
-    'map': """
-W   W   W   W   W   W
-W   F               W
-W   L0              W
-W           B       W
-W           H0      W
-W   W   W   W   W   W
-""" },
-
-{   'name': "temp", 
-    'map': """
-W   W   W   W   W   W   W   W   W   W   W   W   W
-W   F                   i                   H2  W
-W                               T3B             W
-L0          J3                  B               W
-W                                               W
-W       G                                       L1
-W                       j                       W
-W   B   B                   B                   W
-W                   T0B                         W
-W           W   H0                          H1  W
-W                                       S12 S11 W
-W               B                               W
-W                   T01         T11 T03         W
-T1A k               T0A                     S25 W
-W                               T13         S24 W
-W                                           S23 W
-W               D                               W
-""",
-    'dynamics': [
-        ("ij", "A7", 500),
-        ("k0", "W", 500),
-    ]
-},
-
-{   'name': 2, 
-    'map': """
-W   W   W   W   W           F
-W   W   L0                  W
-W   W       W   B           L1
-L0                  W       W
-W   W       W       W       W
-W   W   B   W       W       W
-    H0                  B    
-W   W   W   W   W           W
-""" },
-
-{   'name': 3, 
-    'map': """
-L7              H                       
-            B                           
-            W                           
-        B               L5              
-            B                           
-    B                                   
-                                        
-                            W           
-                                    L1  
-L4                  F                   
-""" },
-
-{   'name': 4,
-    'map': """
-W   W   W   W   W   W   W   W   W   W   W   W
-W   a                                   b   W
-W                                           W
-W   W                               W   W   W
-W   F                               W   H   W
-W                                           W
-W                                           W
-W   W   W   W   W   W   W   W   W   W   W   W
-""",
-    'dynamics': [
-        ("ab", "L3", 500)
-    ]
-},
-
-{   'name': 5,
-    'map': """
-W   W   W   W   W   W   W   W   W   W   W
-W   F           a                   L1  W
-W                           c           W
-W   L0                                  W
-W                                       W
-W   L0                                  W
-W                                       W
-W                                       W
-W   L0          b                   W   W
-W                           d       H   W
-W   W   W   W   W   W   W   W   W   W   W
-""",
-    'dynamics': [
-        ("ab", "L2", 500),
-        ("cd", "L3", 500),
-    ]
-},
-
-{   'name': 6,
-    'map': """
-W   W   W   F   W   W
-L0      a           W
-L0                  W
-L0                  W
-L0                  W
-L0                  W
-L0                  W
-L0      b           W
-L0                  W
-W   W   W   W   H   W
-""",
-    'dynamics': [
-        ("ab", "A5/A6", 500),
-    ]
-},
-
-
-] # end of LEVELS
-
-LEVEL_TO_START = 1
 LEVEL_TO_START = "temp"
-
+LEVEL_TO_START = 1
 
 DIRECTIONS = [
     ( 1, 0), (-1, 0),   #  >  <     0  1   >>1  0 --
@@ -318,7 +197,7 @@ class BlueBallGame:
         cells = [[None]*w for _ in range(h)]  # [i][j] => (letter, index1, index2) or None
         aliases = {}                          # cell alias => (i,j)
         
-        cellRe = re.compile(r'^([A-Z]?)([0-9A-F]?)([0-9A-F]?)([a-z]?)$')
+        cellRe = re.compile(r'^([A-Z\*]?)([0-9A-F]?)([0-9A-F]?)([a-z]?)$')
         for (i,row) in enumerate(cellsText):
          for (j,cellText) in enumerate(row):
             if cellText:
@@ -355,16 +234,16 @@ class BlueBallGame:
         self.levelSurface = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
         self.ticks = pygame.time.get_ticks()  # current time in ms (already needed for starting animations)
 
-        self.startPoses = []    # poses to respawn
+        self.startPoses = [None]    # start and respawn poses
         self.finishPos = None
-        self.heroPoses = [None] # first one for hero, others for doubles
-        self.heroState = 0      # index of hero skin (0 for normal, others for dying)
-        self.boxes = []         # list of positions
-        self.lazers = []        # list of Lazer objects
-        self.lazersOn = True    # we turn them off when hero reach the finish
+        self.heroPoses = [None]     # first one for hero, others for doubles
+        self.heroState = 0          # index of hero skin (0 for normal, others for dying)
+        self.boxes = []             # list of positions
+        self.lazers = []            # list of Lazer objects
+        self.lazersOn = True        # we turn them off when hero reach the finish
         self.teleports = defaultdict(list)  # teleport color => [(x,y), (x,y)] - both teleport poses
         
-        self.animations = []    # list of Animation objects
+        self.animations = []        # list of Animation objects
         self.currentFrameDynamics = []  # used to process all current frame dynamic animations at once
 
         # Fill level cell integers
@@ -375,10 +254,14 @@ class BlueBallGame:
                 letter, index1, index2 = blockValues
                 cell = 0
                 addNameBits = True      # False for cells drawn by property bits
-                if letter == "H":       # Hero rewpawn pos
-                    while len(self.startPoses) <= index1: self.startPoses.append(None)  #!!! use some defaultlist instead
-                    self.startPoses[index1] = (j, i)
-                    if index1 == self.startIndex:
+                if letter in "H*":      # Hero start or respawn pos
+                    if letter == "H":
+                        pointIndex = 0
+                        self.startPoses[0] = (j, i)
+                    else:
+                        pointIndex = len(self.startPoses)
+                        self.startPoses.append((j, i))
+                    if pointIndex == self.startIndex:
                         self.heroPoses[0] = (j, i)
                     cell |= BIT_START
                     addNameBits = False
