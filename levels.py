@@ -28,12 +28,14 @@ W               B                               W
 W                   T01         T11 T03         W
 T1A k               T0A                     S25 W
 W                               T13         S24 W
-W                                           S23 W
-W               D                               W
+W                                   a   c   S23 W
+W               D                   b   d       W
 """,
     'dynamics': [
         ("ij", "A7", 500),
         ("k0", "W", 500),
+        ("ab", "A7", 1000),
+        ("cd", "A7", 1000, 500),
     ]
 },
 
@@ -119,6 +121,49 @@ W   W   W   W   H   W
 
 {   'name': 7,
     'map': """
+W   W   W   F   W   W   W       L3                  W   
+W   W   W       W   W   W                           W   
+W   W   a       L0                                  W   
+L0                                                  W   
+L0                                  B               W   
+L0      b                                           W   
+W   W       W   W   W   W   W   W   W   W   W       W   
+W   W   W                                           W   
+W   W   W       W   L3  L3  L3  L3  L3  L3  L3  W   W   
+W   W   W   *   W   c                   d           W   
+W   W   W       L0                                  W   
+L0  e   g                                           W   
+L0  f   h                                           W   
+W   W   W   W   W   W   W   W   W   W   W   W   H   W   
+""",
+    'dynamics': [
+        ("ab", "A5/A6",  500),
+        ("cd", "A2A0A1", 1000),
+        ("ef", "A7", 2000),
+        ("gh", "A7", 2000, 1000),
+    ]
+},
+
+{   'name': 8,
+    'map': """
+W   W   L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  W   W   
+W                                                                                                               F   W   
+W   a                                                                                               b               W   
+W                                                                   G                                               W   
+W                                                           L3                          L3                          W   
+W                       L3          L2          L1                      L2  G   G               L2                  W   
+W                                                                                                       L3          W   
+W                                                                       L3              L1  W   W   W               W   
+W   H                                                                                                               W   
+W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   
+""",
+    'dynamics': [
+        ("ab", "A2A0A0A1", 750),
+    ]
+},
+
+{   'name': 9,
+    'map': """
     a               b   W       G           c   
 f                       G       J3              
                         G               W       
@@ -139,7 +184,5 @@ F               G   G   W   W   W   W   W
         ("ij",   "W",   500),
     ]
 },
-
-
 
 ] # end of LEVELS

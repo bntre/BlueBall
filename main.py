@@ -128,7 +128,7 @@ R1  R0  R2  R3
 """)
 
 LEVEL_TO_START = "temp"
-LEVEL_TO_START = 1
+LEVEL_TO_START = 9
 
 DIRECTIONS = [
     ( 1, 0), (-1, 0),   #  >  <     0  1   >>1  0 --
@@ -158,7 +158,7 @@ class DynamicAnimation(Animation):
         super().__init__(name, time, proc)
         self.nameBits       = nameBits      # used for drawing
         self.propertyBits   = propertyBits  # put into level cells (for lazer calculation etc)
-        self.delay          = delay         # ticks between frames
+        self.delay          = delay         # ms between frames
         self.currentPos     = None          # current pos, None before first frame
         #
         self.poses          = poses         # single pos for 'by direction'
@@ -207,15 +207,16 @@ class BlueBallGame:
                 if alias:
                     aliases[alias] = (j,i)
         
-        dynamics = []  # [([poses], direction, [[block names]], delay)]
+        dynamics = []  # [([poses], direction, [[block names]], (stepDelay, optional stepPhase))]
         locationsRe = re.compile(r'^([a-z]+)([0-3]?)$')
-        for (locations, blockNames, delay) in levelDict.get('dynamics', ()):
+        for dynConf in levelDict.get('dynamics', ()):
+            (locations, blockNames, *delays) = dynConf
             (aa, d) = locationsRe.match(locations).groups()
             dynamics.append((
                 tuple(aliases[a] for a in aa),  # key poses
                 int(d) if d else None,          # direction
                 [re.findall(r'[A-Z][0-9]?', r) for r in blockNames.split("/")],  # 2D list of block names
-                delay
+                delays
             ))
         
         return ((w, h), cells, dynamics)
@@ -230,20 +231,20 @@ class BlueBallGame:
     
         (w, h), mapCells, dynamics = self.parse_level(LEVELS[self.levelIndex])
         
-        self.levelSize = (w, h)
-        self.levelSurface = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
-        self.ticks = pygame.time.get_ticks()  # current time in ms (already needed for starting animations)
+        self.levelSize      = (w, h)
+        self.levelSurface   = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
+        self.ticks          = pygame.time.get_ticks()  # current time in ms (already needed for starting animations)
 
-        self.startPoses = [None]    # start and respawn poses
-        self.finishPos = None
-        self.heroPoses = [None]     # first one for hero, others for doubles
-        self.heroState = 0          # index of hero skin (0 for normal, others for dying)
-        self.boxes = []             # list of positions
-        self.lazers = []            # list of Lazer objects
-        self.lazersOn = True        # we turn them off when hero reach the finish
-        self.teleports = defaultdict(list)  # teleport color => [(x,y), (x,y)] - both teleport poses
+        self.startPoses     = [None]      # start and respawn poses
+        self.finishPos      = None
+        self.heroPoses      = [None]      # first one for hero, others for doubles
+        self.heroState      = 0           # index of hero skin (0 for normal, others for dying)
+        self.boxes          = []          # list of positions
+        self.lazers         = []          # list of Lazer objects
+        self.lazersOn       = True        # we turn them off when hero reach the finish
+        self.teleports      = defaultdict(list)  # teleport color => [(x,y), (x,y)] - both teleport poses
         
-        self.animations = []        # list of Animation objects
+        self.animations     = []        # list of Animation objects
         self.currentFrameDynamics = []  # used to process all current frame dynamic animations at once
 
         # Fill level cell integers
@@ -288,15 +289,19 @@ class BlueBallGame:
                 cell |= PROPERTY_BITS_MAP.get(letter, 0)
                 self.level[i][j] = cell
 
+        # Some validation
+        if not self.heroPoses[0]:   raise Exception("No start pos found")
+        if not self.finishPos:      raise Exception("No finish pos found")
+
         # Start dynamic animations
-        for (poses, direction, blocks, delay) in dynamics:
-            self.start_dynamic_animation(poses, direction, blocks, delay)
+        for (poses, direction, blocks, delays) in dynamics:
+            self.start_dynamic_animation(poses, direction, blocks, *delays)
         
         self.recalculateLazerRays = True  # recalculate lazer ray bits
         self.redrawScene = True
         self.canPlay = True  # False on level ending (when just waiting for final animations end)
     
-    def start_dynamic_animation(self, keyPoses, direction, blocks, delay):
+    def start_dynamic_animation(self, keyPoses, direction, blocks, stepDelay, stepPhase = 0):
         poses = []   # collect all poses (from key poses)
         pc = len(keyPoses)
         if pc == 1:  # moving by direction
@@ -318,7 +323,7 @@ class BlueBallGame:
             d = self.start_dynamic_block(
                 block_tuple_to_bits(letter, i1, i2),
                 PROPERTY_BITS_MAP[letter],
-                delay,
+                stepDelay, stepPhase,
                 [add(p, (j,i)) for p in poses], direction
             )
             if letter in "LJ":  # lazer or glass lazer
@@ -475,14 +480,14 @@ class BlueBallGame:
         a.ended = True
 
     # dynamics
-    def start_dynamic_block(self, nameBits, propertyBits, delay, poses, direction):
+    def start_dynamic_block(self, nameBits, propertyBits, stepDelay, stepPhase, poses, direction):
         d = DynamicAnimation(
             "dyn",
-            self.ticks,  # action right now
+            self.ticks - stepPhase,  # substract a 'stepPhase' from the first animation step delay
             self.proc_dynamic_block,
             nameBits,
             propertyBits,
-            delay,
+            stepDelay,
             poses, direction
         )
         self.animations.append(d)
@@ -536,7 +541,7 @@ class BlueBallGame:
             move = False  # move (if space behind) or crash (the first item, if no space)
             p = dyn.currentPos
             d = dirIndex
-            while True:
+            while p:
                 (x,y) = p
                 bits = self.level[y][x]
                 if self.canPlay and p in self.heroPoses:
@@ -544,22 +549,22 @@ class BlueBallGame:
                 elif bits & BIT_BOX:
                     items.append((p, [-1]))
                 else:
-                    items.append((p, []))  # last cell (space)
                     move = not (bits & BIT_SOLID)  # move (if space) or crash (if solid)
+                    if move and items: items.append((p, []))  # add also the last cell (space) to move to
                     break
                 p, d, _ = self.get_next_cell(p, d)
             # move (or crash) the items if any
-            if len(items) > 1:
+            if items:
                 if move:
                     for (c0,c1) in reversed(list(zip(items, items[1:]))):
                         (x0,y0),indices = c0
                         (x1,y1),_       = c1
                         damaged = self.level[y1][x1] & BIT_DAMAGE
                         for i in indices:
-                            if i == -1:  # a box
+                            if i == -1:  # move a box
                                 self.level[y0][x0] &= ~BITS_BOX
                                 self.level[y1][x1] |= damaged and BIT_BOX_BROKEN or BITS_BOX
-                            elif i >= 0:  # hero
+                            elif i >= 0:  # move a hero
                                 self.heroPoses[i] = (x1,y1)  # damage bit will be checked later
                 else:  # no space to move - crash the first item
                     (x,y),indices = items[0]
