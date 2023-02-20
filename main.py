@@ -128,7 +128,7 @@ R1  R0  R2  R3
 """)
 
 LEVEL_TO_START = "temp"
-LEVEL_TO_START = 9
+LEVEL_TO_START = 1
 
 DIRECTIONS = [
     ( 1, 0), (-1, 0),   #  >  <     0  1   >>1  0 --
@@ -178,17 +178,28 @@ class BlueBallGame:
         self.windowSurface = pygame.display.get_surface()
         self.blocksSurface = pygame.image.load("blocks.png").convert()  # DOC: convert() to create a copy that will draw more quickly on the screen
         self.blocksSurface.set_colorkey(self.blocksSurface.get_at((0,0)))  # set transparency color from top-left corner
+        
+        self.windowSize = self.windowSurface.get_size()
+        self.handle_window_resize()
 
         self.levelIndex = 0  # first by default
         for (i,level) in enumerate(LEVELS):
             if level["name"] == LEVEL_TO_START:
                 self.levelIndex = i
         
+        self.deathCount = 0
+        
         self.startIndex = 0  # index of start position to respawn
         self.switchLevel = False  # switching to next level (resetting self.startIndex)
         self.reloadLevel = False  # used to trigger level reloading (including animations) out of process_animations call
         self.load_level()
     
+    def handle_window_resize(self):
+        (w, h) = self.windowSize
+        # header
+        self.headerHeight = min(w, h) // 25
+        self.headerFont = pygame.font.SysFont('Consolas', self.headerHeight * 10//10)
+        
     
     def parse_level(self, levelDict):
         cellsText = split_text_to_cells(levelDict['map'])
@@ -400,11 +411,21 @@ class BlueBallGame:
                 self.draw_block((j,i), "B")
         
         # update window
-        w, h = self.levelSize
-        w2, h2 = self.windowSurface.get_size()
-        k = int(min(w2/w, h2/h))
         self.windowSurface.fill('black')
-        self.windowSurface.blit(pygame.transform.scale(self.levelSurface, (w*k, h*k)), (0, 0))
+        W, H = self.windowSize
+        
+        # header
+        hh = self.headerHeight
+        textSurface = self.headerFont.render("Text Text Text", True, 0x7F7F7Fff)
+        self.windowSurface.blit(textSurface, (hh // 8, 0))
+        textSurface = self.headerFont.render("Text Text Text", True, 0x7F7F7Fff)
+        
+        
+        # blit the level
+        w, h = self.levelSize
+        k = min(W // w, (H - hh) // h)
+        self.windowSurface.blit(pygame.transform.scale(self.levelSurface, (w*k, h*k)), (0, hh))
+        
         pygame.display.update()
 
 
@@ -662,7 +683,10 @@ class BlueBallGame:
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
                     return
-                # window size?
+                elif e.type == pygame.VIDEORESIZE:
+                    self.windowSize = e.size
+                    self.handle_window_resize()
+                    self.redrawScene = True  #!!! update the window only needed
                 elif e.type == pygame.KEYDOWN:
                     if self.canPlay:
                         dirIndex = KEY_DIRECTIONS.get(e.key, -1)  # => 0..3
@@ -692,6 +716,7 @@ class BlueBallGame:
                 self.redrawScene = False
 
 
+
 def test():
     print(image_regions)
 
@@ -700,6 +725,7 @@ def main():
     #test(); return
     
     pygame.init()
+    print(pygame.version)
 
     pygame.display.set_mode((800, 600), flags = pygame.RESIZABLE, depth = 32)
     pygame.display.set_caption('Blue Ball')
