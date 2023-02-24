@@ -1,17 +1,8 @@
 
 LEVELS = [
 
-{   'name': 1, 
-    'map': """
-W   W   W   W   W   W
-W   F               W
-W   L0              W
-W           B       W
-W           H       W
-W   W   W   W   W   W
-""" },
-
-{   'name': "temp",
+{   'id': 0,
+    'name': "temp",
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   W   W
 W   F                   i                   *   W
@@ -29,7 +20,7 @@ W                   T01         T11 T03         W
 T1A k               T0A                     S25 W
 W                               T13         S24 W
 W                                   a   c   S23 W
-W               D                   b   d       W
+W                                   b   d       W
 """,
     'dynamics': [
         ("ij", "A7", 500),
@@ -39,7 +30,33 @@ W               D                   b   d       W
     ]
 },
 
-{   'name': 2, 
+{   'id': 1,
+    'name': "Bypass",
+    'map': """
+W   W   W   W   W   W   W   W   W
+W   W   F                   W   W
+W   W   W                   W   W
+W                           W   W
+W       W   L0              W   W
+W                           W   W
+W   W   W                   W   W
+W   W   H                   W   W
+W   W   W   W   W   W   W   W   W
+""" },
+
+{   'id': 2,
+    'name': "Put a barrier",
+    'map': """
+W   W   W   W   W   W
+W   F               W
+W   L0              W
+W           B       W
+W           H       W
+W   W   W   W   W   W
+""" },
+
+{   'id': 3, 
+    'name': "Three boxes",
     'map': """
 W   W   W   W   W           F
 W   W   L0                  W
@@ -51,13 +68,14 @@ W   W   B   W       W       W
 W   W   W   W   W           W
 """ },
 
-{   'name': 3, 
+{   'id': 3, 
+    'name': "Diagonals",
     'map': """
-L7              H                       
-            B                           
-            W                           
-        B               L5              
-            B                           
+L7              H           W   W   W   
+            B               W   W   W   
+            W               W   W   W   
+        B               L5  W   W   W   
+            B           W   W   W       
     B                                   
                                         
                             W           
@@ -65,7 +83,26 @@ L7              H
 L4                  F                   
 """ },
 
-{   'name': 4,
+{   'id': 4, 
+    'name': "Walk in a circle",
+    'map': """
+L7                      L3                  H   L5  
+            B               B                       
+                                    B               
+                                                    
+    B                                               
+                                                    
+L0                          W   L0          L1  W   
+                                                F   
+                                                    
+                                                    
+                                                    
+                                                    
+                                                    
+""" },
+
+{   'id': 5,
+    'name': "Train to hell",
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   W
 W   a                                   b   W
@@ -81,7 +118,8 @@ W   W   W   W   W   W   W   W   W   W   W   W
     ]
 },
 
-{   'name': 5,
+{   'id': 6,
+    'name': "Action",
     'map': """
 W   W   W   W   W   W   W   W   W   W   W
 W   F           a                   L1  W
@@ -101,7 +139,7 @@ W   W   W   W   W   W   W   W   W   W   W
     ]
 },
 
-{   'name': 6,
+{   'id': 7,
     'map': """
 W   W   W   F   W   W
 L0      a           W
@@ -119,7 +157,7 @@ W   W   W   W   H   W
     ]
 },
 
-{   'name': 7,
+{   'id': 8,
     'map': """
 W   W   W   F   W   W   W       L3                  W   
 W   W   W       W   W   W                           W   
@@ -144,7 +182,7 @@ W   W   W   W   W   W   W   W   W   W   W   W   H   W
     ]
 },
 
-{   'name': 8,
+{   'id': 9,
     'map': """
 W   W   L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  W   W   
 W                                                                                                               F   W   
@@ -162,7 +200,7 @@ W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   
     ]
 },
 
-{   'name': 9,
+{   'id': 10,
     'map': """
     a               b   W       G           c   
 f                       G       J3              

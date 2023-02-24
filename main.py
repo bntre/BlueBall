@@ -1,11 +1,15 @@
-
 import re
+from   collections import defaultdict
+import asyncio
 import pygame
-from collections import defaultdict
 
-from levels import LEVELS
+from   levels import LEVELS
 
-#----------------------------------
+LEVEL_ID_TO_START = 1
+LEVEL_ID_TO_START = 0  # "temp" level for debugging
+
+#-----------------------------------------------------
+# Utils
 
 def add(p0, p1):
     return (p0[0] + p1[0], p0[1] + p1[1])
@@ -28,17 +32,9 @@ def split_text_to_cells(text, cell_width = 4):
         arr.append(a)
     return arr
 
-def split_text_to_cell_map(text, cell_width = 4):
-    "multiline text -> { cell => (i,j) }"
-    arr = split_text_to_cells(text, cell_width)
-    m = {}
-    for (i,a) in enumerate(arr):
-     for (j,cell) in enumerate(a):
-        if cell:
-            m[cell] = (i,j)
-    return m
 
-#----------------------------------
+#-----------------------------------------------------
+# Level cell integer bits
 #  
 # [31 30 29 28 27 26 25 24][23 22 21 20 19 18 17 16][15 14 13 12 11 10  9  8][ 7  6  5  4  3  2  1  0]
 # [  index 2  ;  index 1  ;        letter          ][\  /  |  -]
@@ -47,6 +43,8 @@ def split_text_to_cell_map(text, cell_width = 4):
 #      # used for drawing static objects;
 #      # 0 for boxes - BIT_BOX used instead;
 
+#-----------------------------------------------------
+# Property bits
 
 BIT_VISIBLE          = 1     #!!! needed?
 BIT_SOLID            = 1<<1
@@ -80,13 +78,16 @@ PROPERTY_BITS_MAP = {    # block name letter => property bits
     "S": BITS_SPIKE,
 }
 
+#-----------------------------------------------------
+# Name bits
+
 BLOCK_NAME_SHIFT        = 16
 BLOCK_NAME_MASK         = 0xFFFF << BLOCK_NAME_SHIFT
 BLOCK_NAME_MASK_INDEX1  = 0x0F00 << BLOCK_NAME_SHIFT
 BLOCK_NAME_MASK_INDEX2  = 0xF000 << BLOCK_NAME_SHIFT
 
 def block_name_to_tuple(name):
-    name += "00"
+    name += "00"  # add default zeros
     return name[0], int(name[1], 16), int(name[2], 16)
 def block_tuple_to_bits(letter, index1, index2):
     nameBits  = ord(letter) <<  BLOCK_NAME_SHIFT
@@ -100,13 +101,20 @@ def get_bits_index1(bits):
 def get_bits_index2(bits):
     return     (bits >> (BLOCK_NAME_SHIFT + 8+4)) & 0xF
 
+#-----------------------------------------------------
+# Block image map
 
 CELLSIZE = 9  # in pixels
 
 def create_image_areas(text, cell_width = 4):
-    """Result map: block name bits => image area"""
-    m = split_text_to_cell_map(text, cell_width)
-    areas = {}
+    """Result map: block name bits => image area (for blitting)"""
+    arr = split_text_to_cells(text, cell_width)
+    m = {}  # { cell text => (i,j) }
+    for (i,a) in enumerate(arr):
+     for (j,cell) in enumerate(a):
+        if cell:
+            m[cell] = (i,j)
+    areas = {}  # block name bits => image area
     for (name,(i,j)) in m.items():
         nameBits = block_tuple_to_bits(*block_name_to_tuple(name))
         areas[nameBits] = (j*CELLSIZE, i*CELLSIZE, CELLSIZE, CELLSIZE)
@@ -127,8 +135,7 @@ J6  J5  J7  J4  C8  C9  CA  CB
 R1  R0  R2  R3                  
 """)
 
-LEVEL_TO_START = "temp"
-LEVEL_TO_START = 1
+#-----------------------------------------------------
 
 DIRECTIONS = [
     ( 1, 0), (-1, 0),   #  >  <     0  1   >>1  0 --
@@ -145,6 +152,7 @@ KEY_DIRECTIONS = {  # key => index of DIRECTIONS
 }
 
 
+#-----------------------------------------------------
 
 class Animation:
     def __init__(self, name, time, proc):
@@ -172,6 +180,7 @@ class Lazer:
         self.dynamic   = dynamic    # DynamicAnimation for dynamic or None for static
 
 
+
 class BlueBallGame:
 
     def __init__(self):
@@ -179,27 +188,42 @@ class BlueBallGame:
         self.blocksSurface = pygame.image.load("blocks.png").convert()  # DOC: convert() to create a copy that will draw more quickly on the screen
         self.blocksSurface.set_colorkey(self.blocksSurface.get_at((0,0)))  # set transparency color from top-left corner
         
-        self.windowSize = self.windowSurface.get_size()
-        self.handle_window_resize()
+        self.textSurfaces = [None] * 3;
+        self.timerSecs  = -1
+        self.timerColor = -1  # 0 - normal, 1 - win, 2 - f
+
+        self.currentTime = pygame.time.get_ticks()  # also updated on each frame
+        self.levelStartTime = 0  # used to show the timer
+        
+        self.deathCount    = 0
+        
+        self.canPlay       = False
+        self.switchLevel   = False  # switching to next level (resetting self.spawnIndex)
 
         self.levelIndex = 0  # first by default
-        for (i,level) in enumerate(LEVELS):
-            if level["name"] == LEVEL_TO_START:
+        for (i,levelDict) in enumerate(LEVELS):
+            if levelDict.get('id') == LEVEL_ID_TO_START:
                 self.levelIndex = i
+                break
         
-        self.deathCount = 0
+        self.windowSize = self.windowSurface.get_size()
+        self.handle_window_resize()  # all text surfaces updated there
         
-        self.startIndex = 0  # index of start position to respawn
-        self.switchLevel = False  # switching to next level (resetting self.startIndex)
+        self.spawnIndex  = 0  # index of start position to respawn
+        self.spawnTime   = 0  # time of playing the level from beginning, used to reset timer on respawn
         self.reloadLevel = False  # used to trigger level reloading (including animations) out of process_animations call
         self.load_level()
-    
+
     def handle_window_resize(self):
         (w, h) = self.windowSize
+        
         # header
         self.headerHeight = min(w, h) // 25
         self.headerFont = pygame.font.SysFont('Consolas', self.headerHeight * 10//10)
         
+        self.update_level_name_text()
+        self.update_timer_text()
+        self.update_deaths_text()
     
     def parse_level(self, levelDict):
         cellsText = split_text_to_cells(levelDict['map'])
@@ -235,7 +259,8 @@ class BlueBallGame:
     def load_level(self):
         if self.switchLevel:
             self.levelIndex += 1
-            self.startIndex  = 0
+            self.spawnIndex  = 0
+            self.spawnTime   = 0
             self.switchLevel = False
     
         if self.levelIndex == len(LEVELS): raise "CONGRATULATIONS!"
@@ -244,9 +269,10 @@ class BlueBallGame:
         
         self.levelSize      = (w, h)
         self.levelSurface   = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
-        self.ticks          = pygame.time.get_ticks()  # current time in ms (already needed for starting animations)
-
-        self.startPoses     = [None]      # start and respawn poses
+        
+        self.levelStartTime = self.currentTime - self.spawnTime
+        
+        self.spawnPoses     = [None]      # start and respawn poses
         self.finishPos      = None
         self.heroPoses      = [None]      # first one for hero, others for doubles
         self.heroState      = 0           # index of hero skin (0 for normal, others for dying)
@@ -268,12 +294,12 @@ class BlueBallGame:
                 addNameBits = True      # False for cells drawn by property bits
                 if letter in "H*":      # Hero start or respawn pos
                     if letter == "H":
-                        pointIndex = 0
-                        self.startPoses[0] = (j, i)
-                    else:
-                        pointIndex = len(self.startPoses)
-                        self.startPoses.append((j, i))
-                    if pointIndex == self.startIndex:
+                        spawnIndex = 0
+                        self.spawnPoses[0] = (j, i)
+                    elif letter == "*":
+                        spawnIndex = len(self.spawnPoses)
+                        self.spawnPoses.append((j, i))
+                    if spawnIndex == self.spawnIndex:  # (re)spawn here
                         self.heroPoses[0] = (j, i)
                     cell |= BIT_START
                     addNameBits = False
@@ -307,11 +333,14 @@ class BlueBallGame:
         # Start dynamic animations
         for (poses, direction, blocks, delays) in dynamics:
             self.start_dynamic_animation(poses, direction, blocks, *delays)
-        
+
         self.recalculateLazerRays = True  # recalculate lazer ray bits
-        self.redrawScene = True
+        self.redrawLevel = True
         self.canPlay = True  # False on level ending (when just waiting for final animations end)
     
+        self.update_level_name_text()
+        self.update_timer_text()
+        
     def start_dynamic_animation(self, keyPoses, direction, blocks, stepDelay, stepPhase = 0):
         poses = []   # collect all poses (from key poses)
         pc = len(keyPoses)
@@ -366,7 +395,7 @@ class BlueBallGame:
                 area = area
             )
     
-    def redraw_scene(self):
+    def redraw_level(self):
         self.levelSurface.fill('black')
         
         # Layer 1
@@ -410,19 +439,14 @@ class BlueBallGame:
             if cell & BIT_BOX:                  # Box
                 self.draw_block((j,i), "B")
         
-        # update window
+    def update_window(self):        
         self.windowSurface.fill('black')
+        
+        self.blit_header_texts()
+        
         W, H = self.windowSize
-        
-        # header
-        hh = self.headerHeight
-        textSurface = self.headerFont.render("Text Text Text", True, 0x7F7F7Fff)
-        self.windowSurface.blit(textSurface, (hh // 8, 0))
-        textSurface = self.headerFont.render("Text Text Text", True, 0x7F7F7Fff)
-        
-        
-        # blit the level
         w, h = self.levelSize
+        hh   = self.headerHeight
         k = min(W // w, (H - hh) // h)
         self.windowSurface.blit(pygame.transform.scale(self.levelSurface, (w*k, h*k)), (0, hh))
         
@@ -451,7 +475,7 @@ class BlueBallGame:
         # call proc-s
         for a in self.animations:
             if not a.ended:
-                if self.ticks >= a.time:
+                if self.currentTime >= a.time:
                     a.proc(a)
         # remove ended
         self.animations = list(filter(
@@ -463,7 +487,7 @@ class BlueBallGame:
             if a.name == name:
                 a.ended = True
     def add_animation(self, name, delay, proc):
-        a = Animation(name, self.ticks + delay, proc)
+        a = Animation(name, self.currentTime + delay, proc)
         self.animations.append(a)
 
     # pushing a box animation
@@ -471,10 +495,10 @@ class BlueBallGame:
         self.heroState = 1  # face for pushing a box
         self.stop_animation("pushingBox")
         self.add_animation("pushingBox", 500, self.proc_pushing_box_animation)
-        self.redrawScene = True
+        self.redrawLevel = True
     def proc_pushing_box_animation(self, a):
         self.heroState = 0
-        self.redrawScene = True
+        self.redrawLevel = True
         a.ended = True
     def stop_pushing_box_animation(self):
         self.stop_animation("pushingBox")
@@ -483,11 +507,11 @@ class BlueBallGame:
     def start_dying_animation(self):
         self.heroState = 2  # begin to die
         self.add_animation("dying", 100, self.proc_dying_animation)
-        self.redrawScene = True
+        self.redrawLevel = True
     def proc_dying_animation(self, a):
         if self.heroState < 8:
             self.heroState += 1
-            self.redrawScene = True
+            self.redrawLevel = True
             a.time += 100  # request next frame
         else:
             a.ended = True
@@ -504,7 +528,7 @@ class BlueBallGame:
     def start_dynamic_block(self, nameBits, propertyBits, stepDelay, stepPhase, poses, direction):
         d = DynamicAnimation(
             "dyn",
-            self.ticks - stepPhase,  # substract a 'stepPhase' from the first animation step delay
+            self.currentTime - stepPhase,  # substract a 'stepPhase' from the first animation step delay
             self.proc_dynamic_block,
             nameBits,
             propertyBits,
@@ -545,7 +569,7 @@ class BlueBallGame:
         #
         self.currentFrameDynamics = []
         self.recalculateLazerRays = True
-        self.redrawScene = True
+        self.redrawLevel = True
     def put_dynamic_to_next_cell(self, dyn, dirIndex):
         if dyn.propertyBits & BIT_DAMAGE:
             # check a box here
@@ -633,7 +657,7 @@ class BlueBallGame:
             if not bits & BIT_SOLID:
                 self.heroPoses[i] = newPos
                 #self.recalculateLazerRays = True
-                self.redrawScene = True
+                self.redrawLevel = True
             
             elif bits & BIT_BOX:  # box. can we move it?
                 newPos2, dirIndex2, bits2 = self.get_next_cell(newPos, dirIndex)
@@ -646,7 +670,7 @@ class BlueBallGame:
                     self.level[y2][x2] |=  BITS_BOX
                     self.heroPoses[i] = newPos
                     self.recalculateLazerRays = True
-                    self.redrawScene = True
+                    self.redrawLevel = True
                     self.start_pushing_box_animation()
         
     
@@ -658,7 +682,7 @@ class BlueBallGame:
             print("=== YOU WIN ===")
             self.lazersOn = False  # turn lazers off (otherwise lazer may reach the winning hero)
             self.recalculateLazerRays = True
-            self.redrawScene = True
+            self.redrawLevel = True
             #
             self.switchLevel = True
             #self.levelIndex += 1  #!!! use some self.switchLevel instead
@@ -668,17 +692,63 @@ class BlueBallGame:
             print("=== YOU LOSE ===")
             self.stop_pushing_box_animation() # if any
             self.start_dying_animation()
+            #
+            self.deathCount += 1
+            self.update_deaths_text()
+            
     
-    def run_loop(self):
+    # header text surfaces
+    def update_level_name_text(self):
+        levelDict = LEVELS[self.levelIndex]
+        levelId   = levelDict.get('id', 0)
+        levelName = levelDict.get('name', "unnamed")
+        self.textSurfaces[0] = self.headerFont.render("%d. %s" % (levelId, levelName), True, 0x7F7F7Fff)
+    def update_deaths_text(self):
+        self.textSurfaces[1] = self.headerFont.render("D: %d" % self.deathCount, True, 0x7F7F7Fff)
+    def update_timer_text(self):
+        if self.canPlay:
+            s = (self.currentTime - self.levelStartTime) // 1000
+            c = 0
+        else:
+            s = self.timerSecs  # timer stopped
+            c = self.switchLevel and 1 or 2
+        if self.timerSecs == s and self.timerColor == c: return False
+        self.timerSecs  = s
+        self.timerColor = c
+        timerText = "%d:%02d" % (s // 60, s % 60)
+        self.textSurfaces[2] = self.headerFont.render(timerText, True, (0x7F7F7Fff, 0x7FFF7Fff, 0xFF7F7Fff)[c])
+        return True
+    def blit_header_texts(self):
+        space = self.headerHeight // 8
+        shiftLeft  = 0
+        shiftRight = 0
+        shiftLeft  = self.blit_text(self.windowSurface, self.textSurfaces[0], shiftLeft  + space)  # level name
+        shiftRight = self.blit_text(self.windowSurface, self.textSurfaces[2], shiftRight - space)  # timer
+        shiftRight = self.blit_text(self.windowSurface, self.textSurfaces[1], shiftRight - space*10)  # deaths
+    
+    def blit_text(self, destSurface, textSurface, shift):
+        destWidth   = destSurface.get_size()[0]
+        sourceWidth = textSurface.get_size()[0]
+        if shift >= 0:  # left side
+            destSurface.blit(textSurface, (shift, 0))
+            return shift + sourceWidth
+        else:           # right side
+            shift -= sourceWidth
+            destSurface.blit(textSurface, (destWidth + shift, 0))
+            return shift
+    
+    async def run_loop(self):
         
         while True:
             
+            self.currentTime = pygame.time.get_ticks()  # in ms
+            
+            timerUpdated = self.update_timer_text()
+
             if self.reloadLevel:
                 self.reloadLevel = False
                 self.load_level()
             
-            self.ticks = pygame.time.get_ticks()  # in ms
-
             # handle all events
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
@@ -686,7 +756,7 @@ class BlueBallGame:
                 elif e.type == pygame.VIDEORESIZE:
                     self.windowSize = e.size
                     self.handle_window_resize()
-                    self.redrawScene = True  #!!! update the window only needed
+                    self.redrawLevel = True  #!!! actually update the window only needed
                 elif e.type == pygame.KEYDOWN:
                     if self.canPlay:
                         dirIndex = KEY_DIRECTIONS.get(e.key, -1)  # => 0..3
@@ -708,12 +778,20 @@ class BlueBallGame:
                 heroPos = self.heroPoses[0]
                 if heroPos == self.finishPos:
                     self.end_playing(win = True)
-                elif heroPos in self.startPoses:
-                    self.startIndex = self.startPoses.index(heroPos)  # save pos to respawn
+                elif heroPos in self.spawnPoses:
+                    spawnIndex = self.spawnPoses.index(heroPos)
+                    if self.spawnIndex != spawnIndex:
+                        self.spawnIndex = spawnIndex  # save new pos to respawn
+                        self.spawnTime  = self.currentTime - self.levelStartTime
 
-            if self.redrawScene:
-                self.redraw_scene()
-                self.redrawScene = False
+            updateWindow = self.redrawLevel or timerUpdated
+            if self.redrawLevel:
+                self.redraw_level()
+                self.redrawLevel = False
+            if updateWindow:
+                self.update_window()
+            
+            await asyncio.sleep(0)
 
 
 
@@ -721,20 +799,18 @@ def test():
     print(image_regions)
 
 
-def main():
+async def main():
     #test(); return
     
     pygame.init()
-    print(pygame.version)
 
     pygame.display.set_mode((800, 600), flags = pygame.RESIZABLE, depth = 32)
     pygame.display.set_caption('Blue Ball')
     
     game = BlueBallGame()
-    game.run_loop()
+    await game.run_loop()
     
     pygame.quit()
 
 
-
-main()
+asyncio.run(main())
