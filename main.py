@@ -47,27 +47,29 @@ def split_text_to_cells(text, cell_width = 4):
 #-----------------------------------------------------
 # Property bits
 
-BIT_VISIBLE          = 1     #!!! needed?
-BIT_SOLID            = 1<<1
-BIT_OPAQUE           = 1<<2
-BIT_START            = 1<<3  # start or respawn cell (it stays "invisible")
-BIT_FINISH           = 1<<4  # to mark finish cell   (it stays "invisible")
-BIT_BOX              = 1<<5
-BIT_BOX_BROKEN       = 1<<6
-BIT_TELEPORT         = 1<<7
-BIT_TELEPORT_SECOND  = 1<<8  # to easy find the second teleport
-BIT_BUTTON           = 1<<9
-BIT_DAMAGE           = 1<<10  # a damaging block (e.g. spike)
-BIT_RAY0             = 1<<12 # shift 0..3 for  --  |  /  \
-BITS_RAYS            = (BIT_RAY0 << 0) | (BIT_RAY0 << 1) | (BIT_RAY0 << 2) | (BIT_RAY0 << 3)
+BIT_VISIBLE         = 1     #!!! needed?
+BIT_SOLID           = 1<<1  # solid for hero, lazers, boxes
+BIT_OPAQUE          = 1<<2
+BIT_START           = 1<<3  # start or respawn cell (it stays "invisible")
+BIT_FINISH          = 1<<4  # to mark finish cell   (it stays "invisible")
+BIT_BOX             = 1<<5
+BIT_BOX_BROKEN      = 1<<6
+BIT_TELEPORT        = 1<<7
+BIT_TELEPORT_SECOND = 1<<8  # to easy find the second teleport
+BIT_BUTTON          = 1<<9
+BIT_DAMAGE          = 1<<10 # a damaging block (e.g. spike)
+BIT_DOUBLE_WALL     = 1<<11 # a wall the double can go through  
+BIT_RAY0            = 1<<12 # shift 0..3 for  --  |  /  \
+BITS_RAYS           = (BIT_RAY0 << 0) | (BIT_RAY0 << 1) | (BIT_RAY0 << 2) | (BIT_RAY0 << 3)
 
-BITS_WALL       = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE
-BITS_GLASS      = BIT_VISIBLE | BIT_SOLID
-BITS_LASER      = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE
-BITS_GLASSLASER = BIT_VISIBLE | BIT_SOLID
-BITS_BOX        = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE | BIT_BOX
-BITS_TELEPORT   = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE | BIT_TELEPORT
-BITS_SPIKE      = BIT_VISIBLE                          | BIT_DAMAGE
+BITS_WALL           = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE
+BITS_GLASS          = BIT_VISIBLE | BIT_SOLID
+BITS_LASER          = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE
+BITS_GLASSLASER     = BIT_VISIBLE | BIT_SOLID
+BITS_BOX            = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE | BIT_BOX
+BITS_TELEPORT       = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE | BIT_TELEPORT
+BITS_SPIKE          = BIT_VISIBLE                          | BIT_DAMAGE
+BITS_DOUBLE_WALL    = BIT_VISIBLE | BIT_SOLID | BIT_OPAQUE | BIT_DOUBLE_WALL
 
 PROPERTY_BITS_MAP = {    # block name letter => property bits
     "W": BITS_WALL,
@@ -78,6 +80,7 @@ PROPERTY_BITS_MAP = {    # block name letter => property bits
     "A": BITS_WALL,         # Arrow (dynamic blocks)
     "T": BITS_TELEPORT,
     "S": BITS_SPIKE,
+    "V": BITS_DOUBLE_WALL
 }
 
 #-----------------------------------------------------
@@ -688,20 +691,23 @@ class BlueBallGame:
                 self.end_playing(win = False)
         else:
             # collect items to move (player, boxes,..)
-            items = []  # list of tuples (position, [indices]) where index -1 for box or hero index 0,1..
+            items = []  # list of tuples (position, [indices]) where index -1 for box or hero indices 0,1.. (annihilated)
             move = False  # move (if space behind) or crash (the first item, if no space)
             p = dyn.currentPos
             d = dirIndex
             while p:
                 (x,y) = p
                 bits = self.level[y][x]
-                if self.canPlay and p in self.heroPoses:
+                if self.canPlay and p in self.heroPoses:  # a hero
                     items.append((p, [i for (i,h) in enumerate(self.heroPoses) if h == p]))
-                elif bits & BIT_BOX:
+                elif bits & BIT_BOX:  # a box
                     items.append((p, [-1]))
-                else:
-                    move = not (bits & BIT_SOLID)  # move (if space) or crash (if solid)
-                    if move and items: items.append((p, []))  # add also the last cell (space) to move to
+                else: # no more heroes nor boxes
+                    if items: 
+                        # move (if space) or crash (if solid)
+                        move = not bits & BIT_SOLID or \
+                                   bits & BIT_DOUBLE_WALL and all(i >= 1 for i in items[-1][1])  # allow to move the doubles into the "double wall"
+                        if move: items.append((p, []))  # add also the last cell (space) to move to
                     break
                 p, d, _ = self.get_next_cell(p, d)
             # move (or crash) the items if any
@@ -770,7 +776,8 @@ class BlueBallGame:
             newPos, dirIndex, bits = self.get_next_cell(self.heroPoses[i], dirIndex)
             if newPos is None: continue
             
-            if not bits & BIT_SOLID:
+            if not bits & BIT_SOLID or \
+                   bits & BIT_DOUBLE_WALL and i >= 1:  # allow the double to step into the "double wall"
                 self.heroPoses[i] = newPos
                 self.levelUpdated = True  # button may be pushed
                 self.redrawLevel = True
@@ -779,10 +786,10 @@ class BlueBallGame:
                 newPos2, dirIndex2, bits2 = self.get_next_cell(newPos, dirIndex)
                 if newPos2 is None: continue
                 
-                if not bits2 & BIT_SOLID:  # we can move it
+                if not bits2 & BIT_SOLID:  # we can move the box
                     (x, y ) = newPos
                     (x2,y2) = newPos2
-                    self.level[y ][x ] &= ~BITS_BOX  #!!! remove bits by global mask (not only BOX)
+                    self.level[y ][x ] &= ~BITS_BOX
                     self.level[y2][x2] |=  BITS_BOX
                     self.heroPoses[i] = newPos
                     self.levelUpdated = True

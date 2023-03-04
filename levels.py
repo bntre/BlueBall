@@ -20,8 +20,8 @@ W                   T01         T11 T03         W
 T1A k               T0A                     S25 W
 W                               T13         S24 W
 W               D                   a   c   S23 W
-W   Pe                              b   d       W
-W   f               g                           W
+W   Pe                  V           b   d       W
+W   f               g   V                       W
 """,
     'dynamics': [
         ("ij", "A7", 500),
