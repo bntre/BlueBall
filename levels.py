@@ -19,15 +19,19 @@ W               B                               W
 W                   T01         T11 T03         W
 T1A k               T0A                     S25 W
 W                               T13         S24 W
-W                                   a   c   S23 W
-W                                   b   d       W
+W               D                   a   c   S23 W
+W   Pe                              b   d       W
+W   f               g                           W
 """,
     'dynamics': [
         ("ij", "A7", 500),
-        ("k0", "W", 500),
+        ("k0", "W",  500),
         ("ab", "A7", 1000),
         ("cd", "A7", 1000, 500),
-    ]
+    ],
+    'buttons': [
+        ("e", "fg", "A3", 500),
+    ],
 },
 
 {   'id': 1,

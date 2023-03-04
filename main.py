@@ -5,7 +5,8 @@ import pygame
 
 from   levels import LEVELS
 
-LEVEL_ID_TO_START = 1
+LEVEL_ID_TO_START = 1  # normal start
+LEVEL_ID_TO_START = 5  # play custom level
 LEVEL_ID_TO_START = 0  # "temp" level for debugging
 
 #-----------------------------------------------------
@@ -55,7 +56,8 @@ BIT_BOX              = 1<<5
 BIT_BOX_BROKEN       = 1<<6
 BIT_TELEPORT         = 1<<7
 BIT_TELEPORT_SECOND  = 1<<8  # to easy find the second teleport
-BIT_DAMAGE           = 1<<9  # a damaging block (e.g. spike)
+BIT_BUTTON           = 1<<9
+BIT_DAMAGE           = 1<<10  # a damaging block (e.g. spike)
 BIT_RAY0             = 1<<12 # shift 0..3 for  --  |  /  \
 BITS_RAYS            = (BIT_RAY0 << 0) | (BIT_RAY0 << 1) | (BIT_RAY0 << 2) | (BIT_RAY0 << 3)
 
@@ -100,6 +102,10 @@ def get_bits_index1(bits):
     return     (bits >> (BLOCK_NAME_SHIFT + 8)) & 0xF
 def get_bits_index2(bits):
     return     (bits >> (BLOCK_NAME_SHIFT + 8+4)) & 0xF
+def name_bits_to_tuple(bits):
+    return (get_bits_letter(bits), 
+            get_bits_index1(bits),
+            get_bits_index2(bits))
 
 #-----------------------------------------------------
 # Block image map
@@ -122,12 +128,12 @@ def create_image_areas(text, cell_width = 4):
 
 # block name bits => area
 BLOCK_AREAS = create_image_areas("""
-H0  H1  H2  H3  D0  D1  D2  D3          
+H0  H1  H2  H3  D0  D1  D2  D3  V       
 H4  H5  H6  H7  D4  D5  D6  D7          
 -   W   F   G   S30 S31 S33 S15 S14 S13 
 L0  L2  L1  L3  S00 S32 S34 S25 S12 S11 
 L6  L5  L7  L4  S01 S02 S35 S24 S22 S10 
-B0  B1  *       S03 S04 S05 S23 S21 S20 
+B0  B1  *   P   S03 S04 S05 S23 S21 S20 
 A7  A5  A4  A6  T0  T1  T3  T2  
 A2  A0  A1  A3  C0  C1  C2  C3  
 J2  J1  J3  J0  C4  C5  C6  C7  
@@ -155,23 +161,45 @@ KEY_DIRECTIONS = {  # key => index of DIRECTIONS
 #-----------------------------------------------------
 
 class Animation:
-    def __init__(self, name, time, proc):
-        self.name = name  # used e.g. for stopping an animation by name
-        self.time = time  # time to action
-        self.proc = proc  # Animation -> void
-        self.ended = False  # flag used to delete the animation
+    def __init__(self, args):
+        self.name       = args.get('name', "")  # used e.g. for stopping an animation by name
+        self.time       = args.get('time', -1)  # time to action (to call the proc); -1 for paused
+        self.proc       = args['proc']          # Animation -> void
+        self.ended      = False                 # flag used to delete the animation
+        self.flags      = 0                     # additional flags
+
+
+ANIMATION_DYNAMIC       = 1
+ANIMATION_PERMANENT     = 1 << 1
+ANIMATION_BUTTON        = 1 << 2
+
 
 class DynamicAnimation(Animation):
-    def __init__(self, name, time, proc, nameBits, propertyBits, delay, poses, direction = None):
-        super().__init__(name, time, proc)
-        self.nameBits       = nameBits      # used for drawing
-        self.propertyBits   = propertyBits  # put into level cells (for lazer calculation etc)
-        self.delay          = delay         # ms between frames
-        self.currentPos     = None          # current pos, None before first frame
-        #
-        self.poses          = poses         # single pos for 'by direction'
-        self.posIndex       = -1            # -1 for 'by direction' or when not started
-        self.direction      = direction     # None when moving by poses list
+    def __init__(self, args):
+        super().__init__(args)
+        self.flags         |= ANIMATION_DYNAMIC
+        self.nameBits       = args['nameBits']              # used for drawing
+        self.propertyBits   = args['propertyBits']          # put into level cells (for lazer calculation etc)
+        self.currentPos     = None                          # current pos, None until set into level cell
+
+class PermanentDynamicAnimation(DynamicAnimation):
+    def __init__(self, args):
+        super().__init__(args)
+        self.flags         |= ANIMATION_PERMANENT
+        self.delay          = args['delay']                 # ms between frames
+        self.poses          = args['poses']                 # single pos for 'by direction'
+        self.direction      = args.get('direction', None)   # None when moving by poses list
+        self.posIndex       = 0                             # always 0 for 'by direction'
+
+class ButtonDynamicAnimation(DynamicAnimation):
+    def __init__(self, args):
+        super().__init__(args)
+        self.flags         |= ANIMATION_BUTTON
+        self.delay          = args['delay']                 # ms between frames
+        self.buttonPos      = args['buttonPos']
+        self.poses          = args['poses']                 # single pos for 'by direction'
+        self.posIndex       = 0                             #
+        self.pushed = False
 
 class Lazer:
     def __init__(self, direction, staticPos = None, dynamic = None):
@@ -230,7 +258,7 @@ class BlueBallGame:
         w, h = len(cellsText[0]), len(cellsText)
         
         cells = [[None]*w for _ in range(h)]  # [i][j] => (letter, index1, index2) or None
-        aliases = {}                          # cell alias => (i,j)
+        aliasToPos = {}                       # cell alias => (i,j)
         
         cellRe = re.compile(r'^([A-Z\*]?)([0-9A-F]?)([0-9A-F]?)([a-z]?)$')
         for (i,row) in enumerate(cellsText):
@@ -240,21 +268,31 @@ class BlueBallGame:
                 if letter:
                     cells[i][j] = (letter, int(index1 or "0", 16), int(index2 or "0", 16))
                 if alias:
-                    aliases[alias] = (j,i)
+                    aliasToPos[alias] = (j,i)
         
-        dynamics = []  # [([poses], direction, [[block names]], (stepDelay, optional stepPhase))]
+        dynamics = []  # list of ([block poses], optional direction, [[block names]], (stepDelay, optional stepPhase))
         locationsRe = re.compile(r'^([a-z]+)([0-3]?)$')
         for dynConf in levelDict.get('dynamics', ()):
             (locations, blockNames, *delays) = dynConf
-            (aa, d) = locationsRe.match(locations).groups()
+            (aliases, direction) = locationsRe.match(locations).groups()
             dynamics.append((
-                tuple(aliases[a] for a in aa),  # key poses
-                int(d) if d else None,          # direction
+                tuple(aliasToPos[a] for a in aliases),
+                int(direction) if direction else None,
                 [re.findall(r'[A-Z][0-9]?', r) for r in blockNames.split("/")],  # 2D list of block names
                 delays
             ))
         
-        return ((w, h), cells, dynamics)
+        buttons = []  # list of (button pos, [block poses], [[block names]], stepDelay)
+        for butConf in levelDict.get('buttons', ()):
+            (buttonAlias, aliases, blockNames, stepDelay) = butConf
+            buttons.append((
+                aliasToPos[buttonAlias],
+                tuple(aliasToPos[a] for a in aliases),
+                [re.findall(r'[A-Z][0-9]?', r) for r in blockNames.split("/")],  # 2D list of block names
+                stepDelay
+            ))
+        
+        return ((w, h), cells, dynamics, buttons)
     
     def load_level(self):
         if self.switchLevel:
@@ -265,7 +303,7 @@ class BlueBallGame:
     
         if self.levelIndex == len(LEVELS): raise "CONGRATULATIONS!"
     
-        (w, h), mapCells, dynamics = self.parse_level(LEVELS[self.levelIndex])
+        (w, h), mapCells, dynamics, buttons = self.parse_level(LEVELS[self.levelIndex])
         
         self.levelSize      = (w, h)
         self.levelSurface   = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
@@ -281,8 +319,9 @@ class BlueBallGame:
         self.lazersOn       = True        # we turn them off when hero reach the finish
         self.teleports      = defaultdict(list)  # teleport color => [(x,y), (x,y)] - both teleport poses
         
-        self.animations     = []        # list of Animation objects
-        self.currentFrameDynamics = []  # used to process all current frame dynamic animations at once
+        self.animations     = []          # list of Animation objects
+        self.currentFrameDynamics = []    # used to process all current frame dynamic animations at once
+        
 
         # Fill level cell integers
         self.level = [[0]*w for _ in range(h)]  # cell integer values
@@ -321,6 +360,9 @@ class BlueBallGame:
                     ts = self.teleports[index2]
                     if ts: cell |= BIT_TELEPORT_SECOND  # 1 for the second teleport of this color
                     ts.append((j, i))
+                elif letter == "P":     # (Push) Button - draw by BIT_BUTTON
+                    cell |= BIT_BUTTON
+                    addNameBits = False
                 if addNameBits:  # no special bits were set - means regular static object - add block name bits for drawing
                     cell |= block_tuple_to_bits(letter, index1, index2)
                 cell |= PROPERTY_BITS_MAP.get(letter, 0)
@@ -330,46 +372,96 @@ class BlueBallGame:
         if not self.heroPoses[0]:   raise Exception("No start pos found")
         if not self.finishPos:      raise Exception("No finish pos found")
 
-        # Start dynamic animations
-        for (poses, direction, blocks, delays) in dynamics:
-            self.start_dynamic_animation(poses, direction, blocks, *delays)
+        # Start permanent dynamic animations
+        for (keyPoses, direction, blocks, delays) in dynamics:
+            self.start_permanent_dynamic(keyPoses, direction, blocks, *delays)
 
-        self.recalculateLazerRays = True  # recalculate lazer ray bits
+        # Create (prepare) button animations
+        for (buttonPos, keyPoses, blocks, stepDelay) in buttons:
+            self.create_button_dynamic(buttonPos, keyPoses, blocks, stepDelay)
+
+        self.levelUpdated = True  # recalculate lazer ray bits etc
         self.redrawLevel = True
         self.canPlay = True  # False on level ending (when just waiting for final animations end)
     
         self.update_level_name_text()
         self.update_timer_text()
         
-    def start_dynamic_animation(self, keyPoses, direction, blocks, stepDelay, stepPhase = 0):
-        poses = []   # collect all poses (from key poses)
-        pc = len(keyPoses)
-        if pc == 1:  # moving by direction
+    def start_permanent_dynamic(self, keyPoses, direction, blocks, stepDelay, stepPhase = 0):
+        """Start a PermanentDynamicAnimation for each block of this dynamic"""
+        poses = []   # collect full cycle of poses (from key poses): p0 -> p1 -> p2 -> .. -> p0
+        keyCount = len(keyPoses)
+        if keyCount == 1:  # moving by direction
             if direction is None: raise "invalid dynamic by direction"
             poses.append(keyPoses[0])
         else:        # moving by key poses
-            for i in range(pc):
-                (x0,y0), (x1,y1) = keyPoses[i], keyPoses[(i+1)%pc]
+            for i in range(keyCount):
+                (x0,y0), (x1,y1) = keyPoses[i], keyPoses[(i+1)%keyCount]
                 if y0 == y1:  # horizontal
                     poses += [(x,y0) for x in range(x0, x1, x0 < x1 and 1 or -1)]
                 elif x0 == x1:  # vertical
                     poses += [(x0,y) for y in range(y0, y1, y0 < y1 and 1 or -1)]
                 else:
-                    raise "invalid dynamic"
-        # Now start dynamic for each block in 2d array
+                    raise "invalid dynamic key positions"
+        # Now start a dynamic for each block in 2d array
         for (i,row) in enumerate(blocks):
          for (j,blockName) in enumerate(row):
             (letter, i1, i2) = block_name_to_tuple(blockName)
-            d = self.start_dynamic_block(
-                block_tuple_to_bits(letter, i1, i2),
-                PROPERTY_BITS_MAP[letter],
-                stepDelay, stepPhase,
-                [add(p, (j,i)) for p in poses], direction
-            )
+            dyn = PermanentDynamicAnimation({
+                'time':         self.currentTime + stepDelay - stepPhase,  # substract a 'stepPhase' from the first animation step delay
+                'proc':         self.proc_dynamic,
+                'nameBits':     block_tuple_to_bits(letter, i1, i2),
+                'propertyBits': PROPERTY_BITS_MAP[letter],
+                'delay':        stepDelay,
+                'poses':        [add(p, (j,i)) for p in poses], 
+                'direction':    direction
+            })
+            self.animations.append(dyn)
+            
+            # Set the block into cell (!!! no moving or damaging allowed here)
+            (x,y) = dyn.currentPos = dyn.poses[0]
+            self.level[y][x] |= dyn.propertyBits
+            
+            # Also create a dynamic lazer
             if letter in "LJ":  # lazer or glass lazer
-                lazer = Lazer(direction = i1, dynamic = d)
+                lazer = Lazer(direction = i1, dynamic = dyn)
                 self.lazers.append(lazer)
 
+    def create_button_dynamic(self, buttonPos, keyPoses, blocks, stepDelay):
+        poses = []   # collect the path of poses (from key poses): p0 -> p1 -> .. -> pN
+        keyCount = len(keyPoses)
+        for i in range(keyCount-1):
+            (x0,y0), (x1,y1) = keyPoses[i], keyPoses[i+1]
+            if y0 == y1:  # horizontal
+                poses += [(x,y0) for x in range(x0, x1, x0 < x1 and 1 or -1)]
+            elif x0 == x1:  # vertical
+                poses += [(x0,y) for y in range(y0, y1, y0 < y1 and 1 or -1)]
+            else:
+                raise "invalid button dynamic key positions"
+        poses += [keyPoses[-1]]
+        # Now start a button dynamic for each block in 2d array
+        for (i,row) in enumerate(blocks):
+         for (j,blockName) in enumerate(row):
+            (letter, i1, i2) = block_name_to_tuple(blockName)
+            dyn = ButtonDynamicAnimation({
+                'time':         -1,  # paused until button pushed
+                'proc':         self.proc_dynamic,
+                'nameBits':     block_tuple_to_bits(letter, i1, i2),
+                'propertyBits': PROPERTY_BITS_MAP[letter],
+                'delay':        stepDelay,
+                'buttonPos':    buttonPos,
+                'poses':        [add(p, (j,i)) for p in poses]
+            })
+            self.animations.append(dyn)
+            
+            # Set the block into first cell
+            (x,y) = dyn.currentPos = dyn.poses[0]
+            self.level[y][x] |= dyn.propertyBits
+            
+            # Also create a dynamic lazer
+            if letter in "LJ":  # lazer or glass lazer
+                lazer = Lazer(direction = i1, dynamic = dyn)
+                self.lazers.append(lazer)
     
     def in_level(self, pos):
         x, y = pos
@@ -412,6 +504,8 @@ class BlueBallGame:
                 self.draw_block((j,i), "F")     # Finish is like a space
             if cell & BIT_BOX_BROKEN:
                 self.draw_block((j,i), "B", 1)  # Broken box is like a space
+            if cell & BIT_BUTTON:
+                self.draw_block((j,i), "P")     # (Push) Button
 
             # Draw by block name (e.g. L1,..)
             nameBits = cell & BLOCK_NAME_MASK
@@ -427,7 +521,7 @@ class BlueBallGame:
         
         # dynamic objects
         for a in self.animations:
-            if a.name == "dyn":
+            if a.flags & ANIMATION_DYNAMIC:  # DynamicAnimation object (permanent or button)
                 self.draw_block_by_bits(a.currentPos, a.nameBits)
 
         # Layer 2
@@ -474,7 +568,7 @@ class BlueBallGame:
     def process_animations(self):
         # call proc-s
         for a in self.animations:
-            if not a.ended:
+            if not a.ended and a.time != -1:
                 if self.currentTime >= a.time:
                     a.proc(a)
         # remove ended
@@ -487,7 +581,11 @@ class BlueBallGame:
             if a.name == name:
                 a.ended = True
     def add_animation(self, name, delay, proc):
-        a = Animation(name, self.currentTime + delay, proc)
+        a = Animation({ 
+            'name': name, 
+            'time': self.currentTime + delay, 
+            'proc': proc
+        })
         self.animations.append(a)
 
     # pushing a box animation
@@ -524,53 +622,61 @@ class BlueBallGame:
         self.reloadLevel = True
         a.ended = True
 
-    # dynamics
-    def start_dynamic_block(self, nameBits, propertyBits, stepDelay, stepPhase, poses, direction):
-        d = DynamicAnimation(
-            "dyn",
-            self.currentTime - stepPhase,  # substract a 'stepPhase' from the first animation step delay
-            self.proc_dynamic_block,
-            nameBits,
-            propertyBits,
-            stepDelay,
-            poses, direction
-        )
-        self.animations.append(d)
-        return d
-    def stop_dynamic_blocks(self):
-        self.stop_animation("dyn")
-    def proc_dynamic_block(self, d):
-        self.currentFrameDynamics.append(d)  # we process all current frame dynamics at once
-        d.time += d.delay
+    # permanent and button dynamics
+    def proc_dynamic(self, dyn):
+        self.currentFrameDynamics.append(dyn)  # we process all current frame dynamics at once in process_current_frame_dynamics()
+    
     def process_current_frame_dynamics(self):
         if not self.currentFrameDynamics: return
+        
         # remove from previous cell
         for d in self.currentFrameDynamics:
-            if d.currentPos is None: continue  # not yet started
             (x,y) = d.currentPos
-            self.level[y][x] &= ~d.propertyBits
+            if d.flags & ANIMATION_PERMANENT:
+                self.level[y][x] &= ~d.propertyBits
+            elif d.flags & ANIMATION_BUTTON:
+                if d.time == -1: continue
+                pause = False
+                if d.pushed:
+                    pause = d.posIndex == len(d.poses) - 1
+                else:
+                    pause = d.posIndex == 0
+                if pause:
+                    d.time = -1
+                    continue
+                self.level[y][x] &= ~d.propertyBits
+        
         # put to next cell
         for d in self.currentFrameDynamics:
-            dirIndex = None
-            if d.direction is None:     # move by poses
-                prevPos = d.poses[d.posIndex]
-                d.posIndex += 1
-                d.posIndex %= len(d.poses)
+            if d.flags & ANIMATION_PERMANENT:
+                dirIndex = None
+                if d.direction is None:     # move by poses
+                    prevPos = d.currentPos
+                    d.posIndex += 1
+                    d.posIndex %= len(d.poses)
+                    d.currentPos = d.poses[d.posIndex]
+                    step = sub(d.currentPos, prevPos)
+                    dirIndex = DIRECTIONS.index(step)
+                else:                       # move by direction
+                    d.currentPos, dirIndex, _ = self.get_next_cell(d.currentPos, d.direction)
+                self.put_dynamic_to_next_cell(d, dirIndex)
+                d.time += d.delay  # permanently request next frame
+            elif d.flags & ANIMATION_BUTTON:
+                if d.time == -1: continue
+                prevPos = d.currentPos
+                d.posIndex += d.pushed and 1 or -1
                 d.currentPos = d.poses[d.posIndex]
                 step = sub(d.currentPos, prevPos)
                 dirIndex = DIRECTIONS.index(step)
-            else:                       # move by direction
-                if d.currentPos is None:
-                    d.currentPos = d.poses[0]
-                    dirIndex = d.direction
-                else:
-                    d.currentPos, dirIndex, _ = self.get_next_cell(d.currentPos, d.direction)
-            self.put_dynamic_to_next_cell(d, dirIndex)
-        #
+                self.put_dynamic_to_next_cell(d, dirIndex)
+                d.time += d.delay  # request also new frame
+        
         self.currentFrameDynamics = []
-        self.recalculateLazerRays = True
+        self.levelUpdated = True
         self.redrawLevel = True
+        
     def put_dynamic_to_next_cell(self, dyn, dirIndex):
+        """dyn.currentPos is already set"""
         if dyn.propertyBits & BIT_DAMAGE:
             # check a box here
             (x,y) = dyn.currentPos
@@ -623,6 +729,16 @@ class BlueBallGame:
         (x,y) = dyn.currentPos
         self.level[y][x] |= dyn.propertyBits
 
+    # button dynamics
+    def update_button_states(self):
+        for b in self.animations:
+            if b.flags & ANIMATION_BUTTON:
+                (x,y) = b.buttonPos
+                pushed = (self.level[y][x] & BIT_BOX) or (b.buttonPos in self.heroPoses)
+                if b.pushed != pushed:
+                    b.pushed = pushed
+                    if b.time == -1:  # unpause, request the frame - we will check the moving later
+                        b.time = self.currentTime + b.delay
     
     def get_next_cell(self, pos, dirIndex, allowTeleport = True):
         newPos = (x,y) = add(pos, DIRECTIONS[dirIndex])
@@ -656,7 +772,7 @@ class BlueBallGame:
             
             if not bits & BIT_SOLID:
                 self.heroPoses[i] = newPos
-                #self.recalculateLazerRays = True
+                self.levelUpdated = True  # button may be pushed
                 self.redrawLevel = True
             
             elif bits & BIT_BOX:  # box. can we move it?
@@ -669,7 +785,7 @@ class BlueBallGame:
                     self.level[y ][x ] &= ~BITS_BOX  #!!! remove bits by global mask (not only BOX)
                     self.level[y2][x2] |=  BITS_BOX
                     self.heroPoses[i] = newPos
-                    self.recalculateLazerRays = True
+                    self.levelUpdated = True
                     self.redrawLevel = True
                     self.start_pushing_box_animation()
         
@@ -681,7 +797,7 @@ class BlueBallGame:
         if win:
             print("=== YOU WIN ===")
             self.lazersOn = False  # turn lazers off (otherwise lazer may reach the winning hero)
-            self.recalculateLazerRays = True
+            self.levelUpdated = True
             self.redrawLevel = True
             #
             self.switchLevel = True
@@ -763,13 +879,17 @@ class BlueBallGame:
                         if dirIndex != -1:
                             self.handle_hero_step(dirIndex)
 
+            if self.levelUpdated:
+                self.update_button_states()  # update button states after the hero step
+
             # Process all animations (remove ended ones)
             self.process_animations()  # animation procs called here
             self.process_current_frame_dynamics()
 
-            if self.recalculateLazerRays:
+            if self.levelUpdated:
                 self.recalculate_lazer_rays()
-                self.recalculateLazerRays = False
+                #self.update_button_states()  # here update them again: after animations ?
+                self.levelUpdated = False
             
             if self.canPlay:
                 for (x,y) in self.heroPoses:
