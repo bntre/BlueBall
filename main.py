@@ -5,9 +5,9 @@ import pygame
 
 from   levels import LEVELS
 
-LEVEL_ID_TO_START = 1  # normal start
-LEVEL_ID_TO_START = 5  # play custom level
-LEVEL_ID_TO_START = 0  # "temp" level for debugging
+LEVEL_ID_TO_START = "1.1"   # normal start
+LEVEL_ID_TO_START = "2.1"   # play custom level
+LEVEL_ID_TO_START = 0       # "temp" level for debugging
 
 #-----------------------------------------------------
 # Utils
@@ -153,13 +153,12 @@ DIRECTIONS = [
     (-1,-1), ( 1, 1),   #  `\  \,   6  7        3  \
 ]
 
-KEY_DIRECTIONS = {  # key => index of DIRECTIONS
+KEY_TO_DIRECTION = {  # key => index of DIRECTIONS
     pygame.K_RIGHT:  0,
     pygame.K_LEFT:   1,
     pygame.K_UP:     2,
     pygame.K_DOWN:   3,
 }
-
 
 #-----------------------------------------------------
 
@@ -190,6 +189,7 @@ class PermanentDynamicAnimation(DynamicAnimation):
         super().__init__(args)
         self.flags         |= ANIMATION_PERMANENT
         self.delay          = args['delay']                 # ms between frames
+        self.phase          = args['phase']                 # phase of first frame delay
         self.poses          = args['poses']                 # single pos for 'by direction'
         self.direction      = args.get('direction', None)   # None when moving by poses list
         self.posIndex       = 0                             # always 0 for 'by direction'
@@ -215,43 +215,38 @@ class Lazer:
 class BlueBallGame:
 
     def __init__(self):
-        self.windowSurface = pygame.display.get_surface()
-        self.blocksSurface = pygame.image.load("blocks.png").convert()  # DOC: convert() to create a copy that will draw more quickly on the screen
+        self.windowSurface  = pygame.display.get_surface()
+        self.blocksSurface  = pygame.image.load("blocks.png").convert()  # DOC: convert() to create a copy that will draw more quickly on the screen
         self.blocksSurface.set_colorkey(self.blocksSurface.get_at((0,0)))  # set transparency color from top-left corner
         
-        self.textSurfaces = [None] * 3;
-        self.timerSecs  = -1
-        self.timerColor = -1  # 0 - normal, 1 - win, 2 - f
-
-        self.currentTime = pygame.time.get_ticks()  # also updated on each frame
-        self.levelStartTime = 0  # used to show the timer
+        self.windowSize     = self.windowSurface.get_size()
+        self.update_header_font()
         
-        self.deathCount    = 0
-        
-        self.canPlay       = False
-        self.switchLevel   = False  # switching to next level (resetting self.spawnIndex)
+        self.textSurfaces   = [None] * 3
 
-        self.levelIndex = 0  # first by default
+        self.currentTime    = pygame.time.get_ticks()  # updated in main loop
+        
+        self.deathCount     = 0
+
+        self.levelIndex     = 0  # first by default
         for (i,levelDict) in enumerate(LEVELS):
             if levelDict.get('id') == LEVEL_ID_TO_START:
                 self.levelIndex = i
                 break
         
-        self.windowSize = self.windowSurface.get_size()
-        self.handle_window_resize()  # all text surfaces updated there
-        
-        self.spawnIndex  = 0  # index of start position to respawn
-        self.spawnTime   = 0  # time of playing the level from beginning, used to reset timer on respawn
-        self.reloadLevel = False  # used to trigger level reloading (including animations) out of process_animations call
+        self.canPlay        = False
+        self.switchLevel    = False  # switching to other level (resetting self.spawnIndex)
+        self.spawnIndex     = 0  # index of start position to respawn
+        self.spawnTime      = 0  # time of playing the level from beginning, used to reset timer on respawn
         self.load_level()
+        self.reloadLevel    = False  # used to trigger level reloading (including animations) in main loop
 
-    def handle_window_resize(self):
+    def update_header_font(self):
         (w, h) = self.windowSize
-        
-        # header
         self.headerHeight = min(w, h) // 25
         self.headerFont = pygame.font.SysFont('Consolas', self.headerHeight * 10//10)
         
+    def update_header_texts(self):
         self.update_level_name_text()
         self.update_timer_text()
         self.update_deaths_text()
@@ -299,20 +294,15 @@ class BlueBallGame:
     
     def load_level(self):
         if self.switchLevel:
-            self.levelIndex += 1
             self.spawnIndex  = 0
             self.spawnTime   = 0
             self.switchLevel = False
-    
-        if self.levelIndex == len(LEVELS): raise "CONGRATULATIONS!"
     
         (w, h), mapCells, dynamics, buttons = self.parse_level(LEVELS[self.levelIndex])
         
         self.levelSize      = (w, h)
         self.levelSurface   = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
-        
-        self.levelStartTime = self.currentTime - self.spawnTime
-        
+                
         self.spawnPoses     = [None]      # start and respawn poses
         self.finishPos      = None
         self.heroPoses      = [None]      # first one for hero, others for doubles
@@ -377,20 +367,23 @@ class BlueBallGame:
 
         # Start permanent dynamic animations
         for (keyPoses, direction, blocks, delays) in dynamics:
-            self.start_permanent_dynamic(keyPoses, direction, blocks, *delays)
+            self.create_permanent_dynamic(keyPoses, direction, blocks, *delays)
 
         # Create (prepare) button animations
         for (buttonPos, keyPoses, blocks, stepDelay) in buttons:
             self.create_button_dynamic(buttonPos, keyPoses, blocks, stepDelay)
 
-        self.levelUpdated = True  # recalculate lazer ray bits etc
-        self.redrawLevel = True
-        self.canPlay = True  # False on level ending (when just waiting for final animations end)
+        self.levelUpdated   = True  # recalculate lazer ray bits etc
+        self.redrawLevel    = True
+        self.canPlay        = True  # False on level ending (when just waiting for final animations end)
+        self.levelIntro     = True  # playing paused until player pushes a key
     
-        self.update_level_name_text()
-        self.update_timer_text()
+        self.timerSecs      = -1    # paused on spawnTime (when intro)
+        self.timerColor     = -1    # 0 - normal, 1 - win, 2 - dead, -1 - force update
         
-    def start_permanent_dynamic(self, keyPoses, direction, blocks, stepDelay, stepPhase = 0):
+        self.update_header_texts()
+        
+    def create_permanent_dynamic(self, keyPoses, direction, blocks, stepDelay, stepPhase = 0):
         """Start a PermanentDynamicAnimation for each block of this dynamic"""
         poses = []   # collect full cycle of poses (from key poses): p0 -> p1 -> p2 -> .. -> p0
         keyCount = len(keyPoses)
@@ -411,11 +404,12 @@ class BlueBallGame:
          for (j,blockName) in enumerate(row):
             (letter, i1, i2) = block_name_to_tuple(blockName)
             dyn = PermanentDynamicAnimation({
-                'time':         self.currentTime + stepDelay - stepPhase,  # substract a 'stepPhase' from the first animation step delay
+                'time':         -1,  # pause when intro mode
                 'proc':         self.proc_dynamic,
                 'nameBits':     block_tuple_to_bits(letter, i1, i2),
                 'propertyBits': PROPERTY_BITS_MAP[letter],
                 'delay':        stepDelay,
+                'phase':        stepPhase,
                 'poses':        [add(p, (j,i)) for p in poses], 
                 'direction':    direction
             })
@@ -616,16 +610,31 @@ class BlueBallGame:
             a.time += 100  # request next frame
         else:
             a.ended = True
-            self.start_new_level_animation()  # reload same level
+            self.start_level_end_animation(delay = 1000)  # reload same level
 
-    # starting new level (1 sec pause)
-    def start_new_level_animation(self):
-        self.add_animation("newLevel", 1000, self.proc_new_level_animation)
-    def proc_new_level_animation(self, a):
-        self.reloadLevel = True
+    # ending level (jusr a pause)  !!! use some lambda for such easy case
+    def start_level_end_animation(self, delay):
+        self.add_animation("levelEnd", delay, self.proc_level_end_animation)
+    def proc_level_end_animation(self, a):
         a.ended = True
+        self.reloadLevel = True
 
     # permanent and button dynamics
+    def start_permanent_dynamics(self):
+        for d in self.animations:
+            if d.flags & ANIMATION_PERMANENT:
+                d.time = self.currentTime + d.delay - d.phase  # remove the phase from first frame delay
+    
+    def update_button_states(self):
+        for b in self.animations:
+            if b.flags & ANIMATION_BUTTON:
+                (x,y) = b.buttonPos
+                pushed = (self.level[y][x] & BIT_BOX) or (b.buttonPos in self.heroPoses)
+                if b.pushed != pushed:
+                    b.pushed = pushed
+                    if b.time == -1:  # unpause, request the frame - we will check the moving later
+                        b.time = self.currentTime + b.delay
+    
     def proc_dynamic(self, dyn):
         self.currentFrameDynamics.append(dyn)  # we process all current frame dynamics at once in process_current_frame_dynamics()
     
@@ -735,17 +744,7 @@ class BlueBallGame:
         (x,y) = dyn.currentPos
         self.level[y][x] |= dyn.propertyBits
 
-    # button dynamics
-    def update_button_states(self):
-        for b in self.animations:
-            if b.flags & ANIMATION_BUTTON:
-                (x,y) = b.buttonPos
-                pushed = (self.level[y][x] & BIT_BOX) or (b.buttonPos in self.heroPoses)
-                if b.pushed != pushed:
-                    b.pushed = pushed
-                    if b.time == -1:  # unpause, request the frame - we will check the moving later
-                        b.time = self.currentTime + b.delay
-    
+
     def get_next_cell(self, pos, dirIndex, allowTeleport = True):
         newPos = (x,y) = add(pos, DIRECTIONS[dirIndex])
         if not self.in_level(newPos): return (None,None,None)
@@ -787,6 +786,7 @@ class BlueBallGame:
                 if newPos2 is None: continue
                 
                 if not bits2 & BIT_SOLID:  # we can move the box
+                    #!!! bug: if here is a double that can't move!
                     (x, y ) = newPos
                     (x2,y2) = newPos2
                     self.level[y ][x ] &= ~BITS_BOX
@@ -800,17 +800,21 @@ class BlueBallGame:
     def end_playing(self, win):
         if not self.canPlay: return  # already ended
         self.canPlay = False  # player can't play, but wait for some animations end
-        #self.stop_dynamic_blocks()
         if win:
             print("=== YOU WIN ===")
             self.lazersOn = False  # turn lazers off (otherwise lazer may reach the winning hero)
             self.levelUpdated = True
             self.redrawLevel = True
             #
-            self.switchLevel = True
-            #self.levelIndex += 1  #!!! use some self.switchLevel instead
             self.stop_pushing_box_animation() # if any
-            self.start_new_level_animation()
+            
+            if self.levelIndex == len(LEVELS)-1:
+                raise "Congratulations!!!"
+            self.levelIndex += 1
+            self.switchLevel = True
+
+            self.start_level_end_animation(delay = 3000)
+            
         else:
             print("=== YOU LOSE ===")
             self.stop_pushing_box_animation() # if any
@@ -825,11 +829,14 @@ class BlueBallGame:
         levelDict = LEVELS[self.levelIndex]
         levelId   = levelDict.get('id', 0)
         levelName = levelDict.get('name', "unnamed")
-        self.textSurfaces[0] = self.headerFont.render("%d. %s" % (levelId, levelName), True, 0x7F7F7Fff)
+        self.textSurfaces[0] = self.headerFont.render("%s. %s" % (levelId, levelName), True, 0x7F7F7Fff)
     def update_deaths_text(self):
         self.textSurfaces[1] = self.headerFont.render("D: %d" % self.deathCount, True, 0x7F7F7Fff)
     def update_timer_text(self):
-        if self.canPlay:
+        if self.levelIntro:
+            s = self.spawnTime // 1000
+            c = 0
+        elif self.canPlay:
             s = (self.currentTime - self.levelStartTime) // 1000
             c = 0
         else:
@@ -878,13 +885,33 @@ class BlueBallGame:
                     return
                 elif e.type == pygame.VIDEORESIZE:
                     self.windowSize = e.size
-                    self.handle_window_resize()
+                    self.update_header_font()
+                    self.update_header_texts()
                     self.redrawLevel = True  #!!! actually update the window only needed
                 elif e.type == pygame.KEYDOWN:
                     if self.canPlay:
-                        dirIndex = KEY_DIRECTIONS.get(e.key, -1)  # => 0..3
+                        # End the intro
+                        if self.levelIntro:
+                            self.levelIntro = False
+                            self.levelStartTime = self.currentTime - self.spawnTime
+                            self.start_permanent_dynamics()
+                        # Hero step
+                        dirIndex = KEY_TO_DIRECTION.get(e.key, -1)  # => 0..3
                         if dirIndex != -1:
                             self.handle_hero_step(dirIndex)
+                    # switching level
+                    if e.key in (pygame.K_PAGEUP, pygame.K_PAGEDOWN):
+                        if e.key == pygame.K_PAGEDOWN:
+                            if self.levelIndex < len(LEVELS)-1:
+                                self.levelIndex += 1
+                                self.switchLevel = True
+                                self.reloadLevel = True
+                        else:
+                            if self.levelIndex > 0:
+                                self.levelIndex -= 1
+                                self.switchLevel = True
+                                self.reloadLevel = True
+                                
 
             if self.levelUpdated:
                 self.update_button_states()  # update button states after the hero step

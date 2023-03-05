@@ -34,7 +34,7 @@ W   f               g   V                       W
     ],
 },
 
-{   'id': 1,
+{   'id': "1.1",
     'name': "Bypass",
     'map': """
 W   W   W   W   W   W   W   W   W
@@ -48,7 +48,7 @@ W   W   H                   W   W
 W   W   W   W   W   W   W   W   W
 """ },
 
-{   'id': 2,
+{   'id': "1.2",
     'name': "Put a barrier",
     'map': """
 W   W   W   W   W   W
@@ -59,7 +59,7 @@ W           H       W
 W   W   W   W   W   W
 """ },
 
-{   'id': 3, 
+{   'id': "1.3", 
     'name': "Three boxes",
     'map': """
 W   W   W   W   W           F
@@ -72,7 +72,7 @@ W   W   B   W       W       W
 W   W   W   W   W           W
 """ },
 
-{   'id': 3, 
+{   'id': "1.4", 
     'name': "Diagonals",
     'map': """
 L7              H           W   W   W   
@@ -87,7 +87,7 @@ L7              H           W   W   W
 L4                  F                   
 """ },
 
-{   'id': 4, 
+{   'id': "1.5", 
     'name': "Walk in a circle",
     'map': """
 L7                      L3                  H   L5  
@@ -105,7 +105,7 @@ L0                          W   L0          L1  W
                                                     
 """ },
 
-{   'id': 5,
+{   'id': "1.6",
     'name': "Train to hell",
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   W
@@ -122,7 +122,7 @@ W   W   W   W   W   W   W   W   W   W   W   W
     ]
 },
 
-{   'id': 6,
+{   'id': "1.7",
     'name': "Action",
     'map': """
 W   W   W   W   W   W   W   W   W   W   W
@@ -143,7 +143,7 @@ W   W   W   W   W   W   W   W   W   W   W
     ]
 },
 
-{   'id': 7,
+{   'id': "1.8",
     'map': """
 W   W   W   F   W   W
 L0      a           W
@@ -161,7 +161,7 @@ W   W   W   W   H   W
     ]
 },
 
-{   'id': 8,
+{   'id': "1.9",
     'map': """
 W   W   W   F   W   W   W       L3                  W   
 W   W   W       W   W   W                           W   
@@ -186,7 +186,7 @@ W   W   W   W   W   W   W   W   W   W   W   W   H   W
     ]
 },
 
-{   'id': 9,
+{   'id': "1.10",
     'map': """
 W   W   L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  W   W   
 W                                                                                                               F   W   
@@ -204,7 +204,7 @@ W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   
     ]
 },
 
-{   'id': 10,
+{   'id': "1.11",
     'map': """
     a               b   W       G           c   
 f                       G       J3              
@@ -226,5 +226,73 @@ F               G   G   W   W   W   W   W
         ("ij",   "A3",  500),
     ]
 },
+
+#---------------------------------------------------------
+# Episode 2
+
+{   'id': "2.1",
+    'map': """
+W   W   W   W   W   W   
+W               F   W   
+W   c   b           W   
+W   W   Pa  W   W   W   
+W           H       W   
+W   W   W   W   W   W   
+""",
+    'buttons': [
+        ("a", "bc", "A3", 500),
+    ]
+},
+
+{   'id': "2.2",
+    'map': """
+W   W   W   W   W   W   W   W   W   W   W   W   
+W   F   W   W   W   W   W   Pd  W   W   H   W   
+W   e           f   W   W       W   W       W   
+W                   W   W       W   W       W   
+W                       W   B       W       W   
+W                       W           W       W   
+W                   h   Pg      b   Pa      W   
+W   W   W   W   W   i   W   W   c   W   W   W   
+""",
+    'buttons': [
+        ("a", "bc", "A7", 500),
+        ("d", "ef", "A3", 500),
+        ("g", "hi", "A7", 500),
+    ]
+},
+
+{   'id': "2.3",
+    'map': """
+W   W   W   W   W   W   
+W   W           F   W   
+W   W               W   
+d   c       W   W   W   
+W   W               W   
+b   a       W   W   W   
+W   W           H   W   
+W   W   W   W   W   W   
+""",
+    'dynamics': [
+        ("ab", "A3S00", 750),
+        ("cd", "A3S00", 750),
+    ]
+},
+
+{   'id': "2.4",
+    'map': """
+W   W   W   W   W   W   W   W   W   W   W   W   W   
+W   b   c       Pa                              W   
+W               W   W   W   W   W   W   W   H   W   
+W                       W   W   W   Pd  W       W   
+W   F   W   S00 e                       f       W   
+W   W   W   W   W   W   W   W   W   W   W   W   W   
+""",
+    'buttons': [
+        ("a", "bc", "A3S00", 100),
+        ("d", "ef", "A3S00", 100),
+    ]
+},
+
 
 ] # end of LEVELS
