@@ -6,8 +6,8 @@ import pygame
 from   levels import LEVELS
 
 LEVEL_ID_TO_START = "1.1"   # normal start
-LEVEL_ID_TO_START = "2.1"   # play custom level
 LEVEL_ID_TO_START = 0       # "temp" level for debugging
+LEVEL_ID_TO_START = "2.10"   # play custom level
 
 #-----------------------------------------------------
 # Utils
@@ -136,12 +136,12 @@ H4  H5  H6  H7  D4  D5  D6  D7
 -   W   F   G   S30 S31 S33 S15 S14 S13 
 L0  L2  L1  L3  S00 S32 S34 S25 S12 S11 
 L6  L5  L7  L4  S01 S02 S35 S24 S22 S10 
-B0  B1  *   P   S03 S04 S05 S23 S21 S20 
+B0  B1  *   A8  S03 S04 S05 S23 S21 S20 
 A7  A5  A4  A6  T0  T1  T3  T2  
 A2  A0  A1  A3  C0  C1  C2  C3  
 J2  J1  J3  J0  C4  C5  C6  C7  
 J6  J5  J7  J4  C8  C9  CA  CB  
-R1  R0  R2  R3                  
+R1  R0  R2  R3  P               
 """)
 
 #-----------------------------------------------------
@@ -276,7 +276,7 @@ class BlueBallGame:
             dynamics.append((
                 tuple(aliasToPos[a] for a in aliases),
                 int(direction) if direction else None,
-                [re.findall(r'[A-Z][0-9]?', r) for r in blockNames.split("/")],  # 2D list of block names
+                [re.findall(r'[ A-Z][0-9]*', r) for r in blockNames.split("/")],  # 2D list of block names
                 delays
             ))
         
@@ -385,12 +385,13 @@ class BlueBallGame:
         
     def create_permanent_dynamic(self, keyPoses, direction, blocks, stepDelay, stepPhase = 0):
         """Start a PermanentDynamicAnimation for each block of this dynamic"""
-        poses = []   # collect full cycle of poses (from key poses): p0 -> p1 -> p2 -> .. -> p0
         keyCount = len(keyPoses)
-        if keyCount == 1:  # moving by direction
-            if direction is None: raise "invalid dynamic by direction"
-            poses.append(keyPoses[0])
-        else:        # moving by key poses
+        if direction is not None:  # moving by direction
+            if keyCount != 1: raise "invalid dynamic by direction"
+            poses = [keyPoses[0]]
+        else:                       # moving by key poses
+            if keyCount < 2: raise "invalid dynamic by key positions"
+            poses = []  # collect full cycle of poses (from key poses): p0 -> p1 -> p2 -> .. -> p0
             for i in range(keyCount):
                 (x0,y0), (x1,y1) = keyPoses[i], keyPoses[(i+1)%keyCount]
                 if y0 == y1:  # horizontal
@@ -400,29 +401,39 @@ class BlueBallGame:
                 else:
                     raise "invalid dynamic key positions"
         # Now start a dynamic for each block in 2d array
+        posRow = poses[0]  # used for 'by direction' case
         for (i,row) in enumerate(blocks):
-         for (j,blockName) in enumerate(row):
-            (letter, i1, i2) = block_name_to_tuple(blockName)
-            dyn = PermanentDynamicAnimation({
-                'time':         -1,  # pause when intro mode
-                'proc':         self.proc_dynamic,
-                'nameBits':     block_tuple_to_bits(letter, i1, i2),
-                'propertyBits': PROPERTY_BITS_MAP[letter],
-                'delay':        stepDelay,
-                'phase':        stepPhase,
-                'poses':        [add(p, (j,i)) for p in poses], 
-                'direction':    direction
-            })
-            self.animations.append(dyn)
-            
-            # Set the block into cell (!!! no moving or damaging allowed here)
-            (x,y) = dyn.currentPos = dyn.poses[0]
-            self.level[y][x] |= dyn.propertyBits
-            
-            # Also create a dynamic lazer
-            if letter in "LJ":  # lazer or glass lazer
-                lazer = Lazer(direction = i1, dynamic = dyn)
-                self.lazers.append(lazer)
+            posCell = posRow  # used for 'by direction' case
+            for (j,blockName) in enumerate(row):
+                if blockName == " ": continue
+                (letter, i1, i2) = block_name_to_tuple(blockName)
+                if direction is not None:
+                    blockPoses = [posCell]
+                else:
+                    blockPoses = [add(p, (j,i)) for p in poses]
+                dyn = PermanentDynamicAnimation({
+                    'time':         -1,  # pause when intro mode
+                    'proc':         self.proc_dynamic,
+                    'nameBits':     block_tuple_to_bits(letter, i1, i2),
+                    'propertyBits': PROPERTY_BITS_MAP[letter],
+                    'delay':        stepDelay,
+                    'phase':        stepPhase,
+                    'poses':        blockPoses,
+                    'direction':    direction
+                })
+                self.animations.append(dyn)
+                
+                # Set the block into cell (!!! no moving or damaging allowed here)
+                (x,y) = dyn.currentPos = dyn.poses[0]
+                self.level[y][x] |= dyn.propertyBits
+                
+                # Also create a dynamic lazer
+                if letter in "LJ":  # lazer or glass lazer
+                    lazer = Lazer(direction = i1, dynamic = dyn)
+                    self.lazers.append(lazer)
+                
+                posCell, _, _ = self.get_next_cell(posCell, 0)  # allow to go through teleports
+            posRow, _, _ = self.get_next_cell(posRow, 3)  # allow to go through teleports
 
     def create_button_dynamic(self, buttonPos, keyPoses, blocks, stepDelay):
         poses = []   # collect the path of poses (from key poses): p0 -> p1 -> .. -> pN
@@ -948,18 +959,17 @@ class BlueBallGame:
             await asyncio.sleep(0)
 
 
-
-def test():
-    print(image_regions)
-
-
 async def main():
-    #test(); return
-    
     pygame.init()
+    
+    windowSize = (800, 800)
+    pygame.display.set_mode(windowSize, flags = pygame.RESIZABLE, depth = 32)
+    pygame.display.set_caption("Blue Ball")
 
-    pygame.display.set_mode((800, 600), flags = pygame.RESIZABLE, depth = 32)
-    pygame.display.set_caption('Blue Ball')
+    #sound1 = pygame.mixer.Sound("Wilhelm_Scream.ogg")
+    #sound1.set_volume(0.1)
+    #pygame.mixer.Sound.play(sound1)
+    #print("main() 1")
     
     game = BlueBallGame()
     await game.run_loop()
