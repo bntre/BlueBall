@@ -5,9 +5,11 @@ import pygame
 
 from   levels import LEVELS
 
-LEVEL_ID_TO_START = "1.1"   # normal start
 LEVEL_ID_TO_START = 0       # "temp" level for debugging
-LEVEL_ID_TO_START = "2.10"   # play custom level
+LEVEL_ID_TO_START = "2.12"  # play custom level
+LEVEL_ID_TO_START = "1.1"   # normal start
+
+USE_SOUNDS = True
 
 #-----------------------------------------------------
 # Utils
@@ -219,6 +221,19 @@ class BlueBallGame:
         self.blocksSurface  = pygame.image.load("blocks.png").convert()  # DOC: convert() to create a copy that will draw more quickly on the screen
         self.blocksSurface.set_colorkey(self.blocksSurface.get_at((0,0)))  # set transparency color from top-left corner
         
+        if USE_SOUNDS:
+            def load_sound(name):
+                s = pygame.mixer.Sound("sound/" + name)
+                s.set_volume(0.1)
+                return s
+            self.soundStart      = load_sound("Pickup_02.ogg")
+            self.soundWin        = load_sound("Jingle_Win_00.ogg")
+            self.soundDead       = load_sound("Hero_Death_00.ogg")
+            self.soundBox        = load_sound("Hit_03.ogg")
+            self.soundTeleport   = load_sound("Pickup_03.ogg")
+            self.soundButton1    = load_sound("Menu_Navigate_00.ogg")
+            self.soundButton0    = load_sound("Menu_Navigate_03.ogg")
+        
         self.windowSize     = self.windowSurface.get_size()
         self.update_header_font()
         
@@ -286,7 +301,7 @@ class BlueBallGame:
             buttons.append((
                 aliasToPos[buttonAlias],
                 tuple(aliasToPos[a] for a in aliases),
-                [re.findall(r'[A-Z][0-9]?', r) for r in blockNames.split("/")],  # 2D list of block names
+                [re.findall(r'[ A-Z][0-9]?', r) for r in blockNames.split("/")],  # 2D list of block names
                 stepDelay
             ))
         
@@ -383,6 +398,10 @@ class BlueBallGame:
         
         self.update_header_texts()
         
+        if USE_SOUNDS:
+            pygame.mixer.Sound.play(self.soundStart)
+        
+        
     def create_permanent_dynamic(self, keyPoses, direction, blocks, stepDelay, stepPhase = 0):
         """Start a PermanentDynamicAnimation for each block of this dynamic"""
         keyCount = len(keyPoses)
@@ -401,39 +420,39 @@ class BlueBallGame:
                 else:
                     raise "invalid dynamic key positions"
         # Now start a dynamic for each block in 2d array
-        posRow = poses[0]  # used for 'by direction' case
+        posRow = poses[0]  # used for 'by direction' case only
         for (i,row) in enumerate(blocks):
-            posCell = posRow  # used for 'by direction' case
+            posCell = posRow
             for (j,blockName) in enumerate(row):
-                if blockName == " ": continue
-                (letter, i1, i2) = block_name_to_tuple(blockName)
-                if direction is not None:
-                    blockPoses = [posCell]
-                else:
-                    blockPoses = [add(p, (j,i)) for p in poses]
-                dyn = PermanentDynamicAnimation({
-                    'time':         -1,  # pause when intro mode
-                    'proc':         self.proc_dynamic,
-                    'nameBits':     block_tuple_to_bits(letter, i1, i2),
-                    'propertyBits': PROPERTY_BITS_MAP[letter],
-                    'delay':        stepDelay,
-                    'phase':        stepPhase,
-                    'poses':        blockPoses,
-                    'direction':    direction
-                })
-                self.animations.append(dyn)
+                if blockName != " ":
+                    (letter, i1, i2) = block_name_to_tuple(blockName)
+                    if direction is not None:
+                        blockPoses = [posCell]
+                    else:
+                        blockPoses = [add(p, (j,i)) for p in poses]
+                    dyn = PermanentDynamicAnimation({
+                        'time':         -1,  # pause when intro mode
+                        'proc':         self.proc_dynamic,
+                        'nameBits':     block_tuple_to_bits(letter, i1, i2),
+                        'propertyBits': PROPERTY_BITS_MAP[letter],
+                        'delay':        stepDelay,
+                        'phase':        stepPhase,
+                        'poses':        blockPoses,
+                        'direction':    direction
+                    })
+                    self.animations.append(dyn)
+                    
+                    # Set the block into cell (!!! no moving or damaging allowed here)
+                    (x,y) = dyn.currentPos = dyn.poses[0]
+                    self.level[y][x] |= dyn.propertyBits
+                    
+                    # Also create a dynamic lazer
+                    if letter in "LJ":  # lazer or glass lazer
+                        lazer = Lazer(direction = i1, dynamic = dyn)
+                        self.lazers.append(lazer)
                 
-                # Set the block into cell (!!! no moving or damaging allowed here)
-                (x,y) = dyn.currentPos = dyn.poses[0]
-                self.level[y][x] |= dyn.propertyBits
-                
-                # Also create a dynamic lazer
-                if letter in "LJ":  # lazer or glass lazer
-                    lazer = Lazer(direction = i1, dynamic = dyn)
-                    self.lazers.append(lazer)
-                
-                posCell, _, _ = self.get_next_cell(posCell, 0)  # allow to go through teleports
-            posRow, _, _ = self.get_next_cell(posRow, 3)  # allow to go through teleports
+                posCell, _, _, _ = self.get_next_cell(posCell, 0)  # allow to go through teleports
+            posRow, _, _, _ = self.get_next_cell(posRow, 3)  # allow to go through teleports
 
     def create_button_dynamic(self, buttonPos, keyPoses, blocks, stepDelay):
         poses = []   # collect the path of poses (from key poses): p0 -> p1 -> .. -> pN
@@ -449,27 +468,28 @@ class BlueBallGame:
         poses += [keyPoses[-1]]
         # Now start a button dynamic for each block in 2d array
         for (i,row) in enumerate(blocks):
-         for (j,blockName) in enumerate(row):
-            (letter, i1, i2) = block_name_to_tuple(blockName)
-            dyn = ButtonDynamicAnimation({
-                'time':         -1,  # paused until button pushed
-                'proc':         self.proc_dynamic,
-                'nameBits':     block_tuple_to_bits(letter, i1, i2),
-                'propertyBits': PROPERTY_BITS_MAP[letter],
-                'delay':        stepDelay,
-                'buttonPos':    buttonPos,
-                'poses':        [add(p, (j,i)) for p in poses]
-            })
-            self.animations.append(dyn)
-            
-            # Set the block into first cell
-            (x,y) = dyn.currentPos = dyn.poses[0]
-            self.level[y][x] |= dyn.propertyBits
-            
-            # Also create a dynamic lazer
-            if letter in "LJ":  # lazer or glass lazer
-                lazer = Lazer(direction = i1, dynamic = dyn)
-                self.lazers.append(lazer)
+            for (j,blockName) in enumerate(row):
+                if blockName != " ":
+                    (letter, i1, i2) = block_name_to_tuple(blockName)
+                    dyn = ButtonDynamicAnimation({
+                        'time':         -1,  # paused until button pushed
+                        'proc':         self.proc_dynamic,
+                        'nameBits':     block_tuple_to_bits(letter, i1, i2),
+                        'propertyBits': PROPERTY_BITS_MAP[letter],
+                        'delay':        stepDelay,
+                        'buttonPos':    buttonPos,
+                        'poses':        [add(p, (j,i)) for p in poses]
+                    })
+                    self.animations.append(dyn)
+                    
+                    # Set the block into first cell
+                    (x,y) = dyn.currentPos = dyn.poses[0]
+                    self.level[y][x] |= dyn.propertyBits
+                    
+                    # Also create a dynamic lazer
+                    if letter in "LJ":  # lazer or glass lazer
+                        lazer = Lazer(direction = i1, dynamic = dyn)
+                        self.lazers.append(lazer)
     
     def in_level(self, pos):
         x, y = pos
@@ -645,6 +665,8 @@ class BlueBallGame:
                     b.pushed = pushed
                     if b.time == -1:  # unpause, request the frame - we will check the moving later
                         b.time = self.currentTime + b.delay
+                    if USE_SOUNDS:
+                        pygame.mixer.Sound.play(b.pushed and self.soundButton1 or self.soundButton0)
     
     def proc_dynamic(self, dyn):
         self.currentFrameDynamics.append(dyn)  # we process all current frame dynamics at once in process_current_frame_dynamics()
@@ -681,7 +703,7 @@ class BlueBallGame:
                     step = sub(d.currentPos, prevPos)
                     dirIndex = DIRECTIONS.index(step)
                 else:                       # move by direction
-                    d.currentPos, dirIndex, _ = self.get_next_cell(d.currentPos, d.direction)
+                    d.currentPos, dirIndex, _, _ = self.get_next_cell(d.currentPos, d.direction)
                 self.put_dynamic_to_next_cell(d, dirIndex)
                 d.time += d.delay  # permanently request next frame
             elif d.flags & ANIMATION_BUTTON:
@@ -729,7 +751,7 @@ class BlueBallGame:
                                    bits & BIT_DOUBLE_WALL and all(i >= 1 for i in items[-1][1])  # allow to move the doubles into the "double wall"
                         if move: items.append((p, []))  # add also the last cell (space) to move to
                     break
-                p, d, _ = self.get_next_cell(p, d)
+                p, d, _, _ = self.get_next_cell(p, d)
             # move (or crash) the items if any
             if items:
                 if move:
@@ -758,8 +780,9 @@ class BlueBallGame:
 
     def get_next_cell(self, pos, dirIndex, allowTeleport = True):
         newPos = (x,y) = add(pos, DIRECTIONS[dirIndex])
-        if not self.in_level(newPos): return (None,None,None)
+        if not self.in_level(newPos): return (None,None,None,False)
         bits = self.level[y][x]
+        teleported = False
         
         if allowTeleport:
             while bits & BIT_TELEPORT:  # there may be few steps like    -> [0 ]     [ 0][O ]     [ O] ->
@@ -771,19 +794,20 @@ class BlueBallGame:
                     bitsT = self.level[yT][xT]
                     dirIndex = get_bits_index1(bitsT) ^ 1  # step out
                     newPos = (x,y) = add((xT,yT), DIRECTIONS[dirIndex])
-                    if not self.in_level(newPos): return (None,None,None)
+                    if not self.in_level(newPos): return (None,None,None,False)
                     bits = self.level[y][x]
+                    teleported = True
                 else:
                     break  # can't enter - just like a solid block
         
-        return (newPos, dirIndex, bits)
+        return (newPos, dirIndex, bits, teleported)
 
 
     def handle_hero_step(self, dirIndex):
         
         for i in range(len(self.heroPoses)):
         
-            newPos, dirIndex, bits = self.get_next_cell(self.heroPoses[i], dirIndex)
+            newPos, dirIndex, bits, teleported = self.get_next_cell(self.heroPoses[i], dirIndex)
             if newPos is None: continue
             
             if not bits & BIT_SOLID or \
@@ -791,9 +815,13 @@ class BlueBallGame:
                 self.heroPoses[i] = newPos
                 self.levelUpdated = True  # button may be pushed
                 self.redrawLevel = True
+                
+                if USE_SOUNDS:
+                    if teleported:
+                        pygame.mixer.Sound.play(self.soundTeleport)
             
             elif bits & BIT_BOX:  # box. can we move it?
-                newPos2, dirIndex2, bits2 = self.get_next_cell(newPos, dirIndex)
+                newPos2, dirIndex2, bits2, _ = self.get_next_cell(newPos, dirIndex)
                 if newPos2 is None: continue
                 
                 if not bits2 & BIT_SOLID:  # we can move the box
@@ -806,6 +834,11 @@ class BlueBallGame:
                     self.levelUpdated = True
                     self.redrawLevel = True
                     self.start_pushing_box_animation()
+                    
+                    if USE_SOUNDS:
+                        pygame.mixer.Sound.play(self.soundBox)
+                        if teleported:
+                            pygame.mixer.Sound.play(self.soundTeleport)
         
     
     def end_playing(self, win):
@@ -826,6 +859,9 @@ class BlueBallGame:
 
             self.start_level_end_animation(delay = 3000)
             
+            if USE_SOUNDS:
+                pygame.mixer.Sound.play(self.soundWin)
+            
         else:
             print("=== YOU LOSE ===")
             self.stop_pushing_box_animation() # if any
@@ -834,6 +870,8 @@ class BlueBallGame:
             self.deathCount += 1
             self.update_deaths_text()
             
+            if USE_SOUNDS:
+                pygame.mixer.Sound.play(self.soundDead)
     
     # header text surfaces
     def update_level_name_text(self):
@@ -966,11 +1004,6 @@ async def main():
     pygame.display.set_mode(windowSize, flags = pygame.RESIZABLE, depth = 32)
     pygame.display.set_caption("Blue Ball")
 
-    #sound1 = pygame.mixer.Sound("Wilhelm_Scream.ogg")
-    #sound1.set_volume(0.1)
-    #pygame.mixer.Sound.play(sound1)
-    #print("main() 1")
-    
     game = BlueBallGame()
     await game.run_loop()
     

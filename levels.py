@@ -386,13 +386,53 @@ d   c       S10 W
     ]
 },
 
+{   'id': "2.7",
+    'map': """
+W   W   W   W   W   W   W   W   W   W   
+W               H                   W   
+W   W   W                   W   W   W   
+a       b           k       l           
+c   d   e           m   n   o           
+f       g           p       q           
+h   i   j           r   s   t           
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+W   W   W                   W   W   W   
+    u       v   Pw  Px      y           
+S22                                 S22 
+S21 S20             F           S20 S21 
+""",
+    'dynamics': [
+        ("ba",   "A3S01S02////A3S01S02////A3S01S02////A3S01S02", 500),
+        ("dedc", "A3S01S02////A3S01S02////A3S01S02////A3S01S02", 500),
+        ("fg",   "A3S01S02////A3S01S02////A3S01S02",             500),
+        ("ihij", "A3S01S02////A3S01S02////A3S01S02",             500),
+        ("kl",   "S12S11A3////S12S11A3////S12S11A3////S12S11A3", 500),
+        ("nmno", "S12S11A3////S12S11A3////S12S11A3////S12S11A3", 500),
+        ("qp",   "S12S11A3////S12S11A3////S12S11A3",             500),
+        ("stsr", "S12S11A3////S12S11A3////S12S11A3",             500),
+    ],
+    'buttons': [
+        ("w", "uv", "A1S00/A1S00/A1S00", 80),
+        ("x", "yx", "S10A2/S10A2/S10A2", 80),
+    ]
+},
+
 {   'id': "2.8",
     'map': """
 W   W   W   W   W   W   W   W
-W           T16              
+W           T19              
 W   F       W               H
 W           W                
-W           T06              
+W           T09              
 W   W   W   W   W   W   W   W
 """,
 },
@@ -486,6 +526,41 @@ W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W
 """,
 },
 
-
+{   'id': "2.12",
+    'map': """
+W   T2B W   W   W   W   W   W   W       W       W   W           *       p           T0A
+W   i                                   S30     S30 W       W   W   W   q           W
+W       W   W   W   W                       j       W       W   W   W               W
+W       T1A     H                   W       k       W   l                           W
+W       W                           W   W           W                               W
+W       W   W   W   c   W       W   W               W   m                           W
+W       W   W   W   d   W       W   W   S20     S20 W                               W
+W       W   W   W               W   W   W       W   W                               W
+W       a   b           f   e       W   S30     S30 W                               W
+W       W       B   h   W   W   W   W               W   W   W   W   W   W   W       W
+W       W       Pr  g   W   W   W   W   W           W       S30     S31     S30     W
+W       W   W   W       W   W   W   W               W       n       S32             W
+W           B   Pt  W                               W       o                       W
+W       W   W   W       Ps  B           S20     S20 W                               W
+W       W                               W       W   W                               W
+W   T3B W   W   W   W   W   W   W   W   W   W   W   W       S20             S20 F   W
+""",
+    'dynamics': [
+        ("ab", "A3S00",  800),
+        ("cd", "A7/S30", 800),
+        ("ef", "S10A3",  800),
+        ("gh", "S20/A7", 800),
+        ("i3", "S20/A6/S30/S20/A6/S30/S20/A6/S30///S20/A6/S30", 800),
+        ("jk", "S20/A7/S30/////S20/A7/S30", 800),
+        ("lm", "S25 S25 S25 /S24 S24 S24 /S23 S23 S23 /A7 A7 A7 ", 800),
+        ("ml", " S25 S25 S25/ S24 S24 S24/ S23 S23 S23/ A7 A7 A7", 800),
+        ("on", "S22   S22/S21 S20 S21/A7WWWA7W/  S30", 800),
+    ],
+    'buttons': [
+        ("r", "pq", "S20/A6", 100),
+        ("s", "pq", " S20/ A6", 100),
+        ("t", "pq", "  S20/  A6", 100),
+    ]
+},
 
 ] # end of LEVELS
