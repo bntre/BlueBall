@@ -288,7 +288,7 @@ W           H       W
 W   W   W   W   W   W   
 """,
     'buttons': [
-        ("a", "bc", "A3", 500),
+        ("a", "bc", "A2", 500),
     ]
 },
 
@@ -304,9 +304,9 @@ W                   h   Pg      b   Pa      W
 W   W   W   W   W   i   W   W   c   W   W   W   
 """,
     'buttons': [
-        ("a", "bc", "A7", 500),
-        ("d", "ef", "A3", 500),
-        ("g", "hi", "A7", 500),
+        ("a", "bc", "A6", 500),
+        ("d", "ef", "A1", 500),
+        ("g", "hi", "A6", 500),
     ]
 },
 
@@ -337,8 +337,8 @@ W   F   W   S00 e                       f       W
 W   W   W   W   W   W   W   W   W   W   W   W   W   
 """,
     'buttons': [
-        ("a", "bc", "A3S00", 100),
-        ("d", "ef", "A3S00", 100),
+        ("a", "bc", "A1S00", 100),
+        ("d", "ef", "A1S00", 100),
     ]
 },
 
@@ -562,5 +562,72 @@ W   T3B W   W   W   W   W   W   W   W   W   W   W   W       S20             S20 
         ("t", "pq", "  S20/  A6", 100),
     ]
 },
+
+
+#---------------------------------------------------------
+# Episode 3
+
+{   'id': "3.6",
+    'map': """
+W   W   W   W   W   W   W   W   W   W   
+W   L3                      L1      W   
+W                                   S10
+W           W   S00     S10 W       S10
+W       H           D               S10
+W                                   S10
+W                   F               S10
+W   L0                      L2      S10
+W   W   W   W   W   W   W   W   W   W   
+""",
+},
+
+{   'id': "3.7",
+    'map': """
+W   W   W   W   W
+T11 a   b       W
+W           H   W
+W               W
+W               W
+W   Pc      D   W
+W               L1
+W   F   T01     W
+W               W
+W   W   W   W   W
+""",
+    'buttons': [
+        ("c", "ab", "A1", 100),
+    ]
+},
+
+{   'id': "3.8",
+    'map': """
+W   W   W   W   W   W   W   W   W   
+T15     D   T06 W   T16     D   T05 
+T11     S20 T02 W   T12         T01 
+W   W   W   W   W   W   W   W   W   
+W   T10         H           T00 W   
+W   W   F                   W   W   
+W   W   W   W   W   W   W   W   W   
+""",
+},
+
+{   'id': "3.9",
+    'map': """
+W   W   W   W   W   W   W   W   W   W   W   W   W   W
+T15             S31 H   T06 T10         S30     D   T01
+W               S32     W   W                       W
+W   S25                 W   W                       W   
+W   S24                 W   W                   S22 W   
+W   S23                 W   W           F       S21 W   
+W   W   W   W   W   W   W   W   W   W   W   W   W   W   
+T11                 D   T05 T16     S30         D   T00
+W                       W   W                       W
+W       S25             W   W   S01 S02             W
+W       S24     S22     W   W                       W
+W       S23     S21     W   W                       W
+W   W   W   W   W   W   W   W   W   W   W   W   W   W   
+""",
+},
+
 
 ] # end of LEVELS
