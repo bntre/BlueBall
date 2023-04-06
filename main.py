@@ -1,3 +1,6 @@
+#!!! TODO:
+#   control with mouse for mobile
+
 import re, random
 from   collections import defaultdict
 import asyncio
@@ -5,9 +8,9 @@ import pygame
 
 from   levels import LEVELS
 
-LEVEL_ID_TO_START = "1.1"   # normal start
-LEVEL_ID_TO_START = 0       # "temp" level for debugging
 LEVEL_ID_TO_START = "3.8"  # play custom level
+LEVEL_ID_TO_START = 0       # "temp" level for debugging
+LEVEL_ID_TO_START = "1.1"   # normal start
 
 USE_SOUNDS = True
 
@@ -220,6 +223,7 @@ class BlueBallGame:
         self.windowSurface  = pygame.display.get_surface()
         self.blocksSurface  = pygame.image.load("blocks.png").convert()  # DOC: convert() to create a copy that will draw more quickly on the screen
         self.blocksSurface.set_colorkey(self.blocksSurface.get_at((0,0)))  # set transparency color from top-left corner
+        self.updateWindow = True
         
         if USE_SOUNDS:
             def load_sound(name):
@@ -235,13 +239,23 @@ class BlueBallGame:
             self.soundButton0    = load_sound("Menu_Navigate_03.ogg")
         
         self.windowSize     = self.windowSurface.get_size()
-        self.update_header_font()
         
+        # header
+        self.update_header_font()
         self.textSurfaces   = [None] * 3
+        self.timerCacheTime  = -1  # currently shown times values (to avoid redrawing); see update_timer_text
+        self.timerCacheColor = -1  # 0 - normal, 1 - win, 2 - dead, -1 - force update        
 
         self.currentTime    = pygame.time.get_ticks()  # updated in main loop
-        
+
+        self.practiceMode   = False
+        self.canPlay        = False
+        self.fireworks      = False  # to show congratulations scene when all levels done
         self.deathCount     = 0
+        self.fullPlayTime   = 0  # time spent on all levels; shown on fireworks
+
+        self.triggerSwitchScene = False  # used to trigger scene switching in main loop
+        self.reset_scene()
         
         self.levelIndex     = 0  # first by default
         for (i,levelDict) in enumerate(LEVELS):
@@ -249,14 +263,11 @@ class BlueBallGame:
                 self.levelIndex = i
                 break
         
-        self.practiceMode   = False
-        self.canPlay        = False
-        self.fireworks      = False  # to show congratulations scene when all levels done
-        self.switchLevel    = False  # switching to other level (resetting self.spawnIndex)
-        self.spawnIndex     = 0  # index of start position to respawn
-        self.spawnTime      = 0  # time of playing the level from beginning, used to reset timer on respawn
+        self.levelPlayTime  = 0   # set on starting level outro (e.g. diyng for respawn) and on level reset
+        self.levelStartTime = -1  # set on ending level intro; used for running the timer
+        
+        self.resetLevel = True
         self.load_level()
-        self.reloadLevel    = False  # used to trigger level reloading (including animations) in main loop; set in proc_level_end_animation()
 
     def update_header_font(self):
         (w, h) = self.windowSize
@@ -267,6 +278,11 @@ class BlueBallGame:
         self.update_level_name_text()
         self.update_timer_text()
         self.update_deaths_text()
+    
+    def reset_scene(self):
+        # reset scene specific stuff
+        self.animations             = []    # list of Animation objects
+        self.currentFrameDynamics   = []    # used to process all current frame dynamic animations at once        
     
     def parse_level(self, levelDict):
         cellsText = split_text_to_cells(levelDict['map'])
@@ -310,15 +326,16 @@ class BlueBallGame:
         return ((w, h), cells, dynamics, buttons)
     
     def load_level(self):
-        if self.switchLevel:
-            self.spawnIndex  = 0
-            self.spawnTime   = 0
-            self.switchLevel = False
+    
+        if self.resetLevel:
+            self.resetLevel = False
+            self.spawnIndex      = 0
+            self.levelPlayTime   = 0
     
         (w, h), mapCells, dynamics, buttons = self.parse_level(LEVELS[self.levelIndex])
         
         self.levelSize      = (w, h)
-        self.levelSurface   = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
+        self.sceneSurface   = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
                 
         self.spawnPoses     = [None]      # start and respawn poses
         self.finishPos      = None
@@ -329,10 +346,6 @@ class BlueBallGame:
         self.lazersOn       = True        # we turn them off when hero reach the finish
         self.teleports      = defaultdict(list)  # teleport color => [(x,y), (x,y)] - both teleport poses
         
-        self.animations     = []          # list of Animation objects
-        self.currentFrameDynamics = []    # used to process all current frame dynamic animations at once
-        
-
         # Fill level cell integers
         self.level = [[0]*w for _ in range(h)]  # cell integer values
         for (i,row) in enumerate(mapCells):
@@ -392,12 +405,11 @@ class BlueBallGame:
 
         self.levelUpdated   = True  # recalculate lazer ray bits etc
         self.redrawLevel    = True
+        #!!! next three might be a level state variable
         self.canPlay        = True  # False on level ending (when just waiting for final animations end)
         self.levelIntro     = True  # playing paused until player pushes a key
+        self.levelOutro     = False
     
-        self.timerCSecs     = -1    # paused on spawnTime (when intro)
-        self.timerColor     = -1    # 0 - normal, 1 - win, 2 - dead, -1 - force update
-        
         self.update_header_texts()
         
         if USE_SOUNDS:
@@ -511,14 +523,14 @@ class BlueBallGame:
         # draw the block (dir and letter bits only)
         area = BLOCK_AREAS.get(nameBits)
         if area:
-            self.levelSurface.blit(
+            self.sceneSurface.blit(
                 self.blocksSurface, 
                 dest = mult(pos, CELLSIZE), 
                 area = area
             )
     
     def redraw_level(self):
-        self.levelSurface.fill('black')
+        self.sceneSurface.fill('black')
         
         # Layer 1
         for (i,a) in enumerate(self.level):
@@ -569,10 +581,10 @@ class BlueBallGame:
         self.blit_header_texts()
         
         W, H = self.windowSize
-        w, h = self.levelSize
+        w, h = self.sceneSurface.get_size()
         hh   = self.headerHeight
         k = min(W // w, (H - hh) // h)
-        self.windowSurface.blit(pygame.transform.scale(self.levelSurface, (w*k, h*k)), (0, hh))
+        self.windowSurface.blit(pygame.transform.scale(self.sceneSurface, (w*k, h*k)), (0, hh))
         
         pygame.display.update()
 
@@ -593,6 +605,22 @@ class BlueBallGame:
                     if not self.in_level(pos): break
                     if self.level[y][x] & BIT_OPAQUE: break
                     self.level[y][x] |= BIT_RAY0 << ray;
+    
+    
+    def check_hero_position(self):
+        # Hero or double dies
+        for (x,y) in self.heroPoses:
+            if self.level[y][x] & (BITS_RAYS | BIT_DAMAGE):
+                self.end_playing(win = False)
+
+        # Hero reaches the finish
+        heroPos = self.heroPoses[0]
+        if heroPos == self.finishPos:
+            self.end_playing(win = True)
+
+        # Hero reaches a spawn point
+        elif heroPos in self.spawnPoses:
+            self.spawnIndex = self.spawnPoses.index(heroPos)  # save new pos to respawn
     
     # Animations
     def process_animations(self):
@@ -650,7 +678,7 @@ class BlueBallGame:
         self.add_animation("levelEnd", delay, self.proc_level_end_animation)
     def proc_level_end_animation(self, a):
         a.ended = True
-        self.reloadLevel = True
+        self.triggerSwitchScene = True
 
     # permanent and button dynamics
     def start_permanent_dynamics(self):
@@ -846,23 +874,27 @@ class BlueBallGame:
     def end_playing(self, win):
         if not self.canPlay: return  # already ended
         self.canPlay = False  # player can't play, but wait for some animations end
+        self.levelOutro = True
+        self.levelPlayTime = self.currentTime - self.levelStartTime
         if win:
-            print("=== YOU WIN ===")
+            #print("=== YOU WIN ===")
             self.lazersOn = False  # turn lazers off (otherwise lazer may reach the winning hero)
             self.levelUpdated = True
             self.redrawLevel = True
             #
             self.stop_pushing_box_animation() # if any
             
+            self.fullPlayTime += self.levelPlayTime
+            
             self.levelIndex += 1
             self.levelIndex %= len(LEVELS)
+            self.resetLevel = True
             
-            self.switchLevel = True
-
             # last level won? - fireworks!
-            #if self.levelIndex == 0 and not self.practiceMode:
+            #!!!if self.levelIndex == 0 and not self.practiceMode:
             if self.levelIndex == 0:
                 self.fireworks = True
+                self.levelPlayTime = self.fullPlayTime  # full time will be shown as stopped timer
             
             self.start_level_end_animation(delay = 3000)
             
@@ -870,7 +902,7 @@ class BlueBallGame:
                 pygame.mixer.Sound.play(self.soundWin)
             
         else:
-            print("=== YOU LOSE ===")
+            #print("=== YOU LOSE ===")
             self.stop_pushing_box_animation() # if any
             self.start_dying_animation()
             #
@@ -895,21 +927,29 @@ class BlueBallGame:
     def update_deaths_text(self):
         self.textSurfaces[1] = self.headerFont.render("D: %d" % self.deathCount, True, 0x7F7F7Fff)
     def update_timer_text(self):
+        run = False
         if self.levelIntro:
-            s = self.spawnTime // 100
-            c = 0
-        elif self.canPlay or (self.fireworks and not self.switchLevel):
-            s = (self.currentTime - self.levelStartTime) // 100  # timer is running
-            c = self.fireworks and 1 or 0  # run timer green on outro
+            run, col = False, 0  # 0 - gray, 1 - green (win), 2 - red (lose)
+        elif self.canPlay:
+            run, col = True, 0  # gray
+        elif self.fireworks and not self.levelOutro:
+            run, col = False, 1  # green
         else:
-            s = self.timerCSecs  # timer stopped
-            c = self.switchLevel and 1 or 2
-        if self.timerCSecs == s and self.timerColor == c: return False
-        self.timerCSecs = s
-        self.timerColor = c
-        timerText = "%d:%02d.%01d" % (s // 600, s // 10 % 60, s % 10)
-        self.textSurfaces[2] = self.headerFont.render(timerText, True, (0x7F7F7Fff, 0x7FFF7Fff, 0xFF7F7Fff)[c])
-        return True
+            run, col = False, self.resetLevel and 1 or 2
+        #
+        if run:
+            time = (self.currentTime - self.levelStartTime) // 100
+        else:
+            time = self.levelPlayTime // 100
+        # 
+        if self.timerCacheTime == time and self.timerCacheColor == col:  # nothing changed
+            return False
+        else:
+            self.timerCacheTime  = time
+            self.timerCacheColor = col
+            timerText = "%d:%02d.%01d" % (time // 600, time // 10 % 60, time % 10)
+            self.textSurfaces[2] = self.headerFont.render(timerText, True, (0x7F7F7Fff, 0x7FFF7Fff, 0xFF7F7Fff)[col])
+            return True
     def blit_header_texts(self):
         space = self.headerHeight // 8
         shiftLeft  = 0
@@ -929,30 +969,40 @@ class BlueBallGame:
             destSurface.blit(textSurface, (destWidth + shift, 0))
             return shift
     
-    def start_fireworks(self):
-        self.switchLevel    = False
-        #!!! fireworks should be a scene, not a level, with some reset_scene()..
-        self.animations     = []          # list of Animation objects
-        self.currentFrameDynamics = []    # used to process all current frame dynamic animations at once        
-        w, h = 10, 10
-        self.levelSize      = (w, h)
-        self.levelSurface   = pygame.surface.Surface((w*CELLSIZE, h*CELLSIZE))  # no scaling up, original pixel size
-        self.levelSurface.fill('black')
+    def start_fireworks_scene(self):
+        self.sceneSurface = pygame.surface.Surface((100, 100))  
+        self.sceneSurface.fill('black')
         self.update_header_texts()
-        self.levelStartTime = self.currentTime
-        self.add_animation("outro", 100, self.proc_fireworks)
-    def stop_fireworks(self):
+        self.levelStartTime = self.currentTime  # we use level timer for fireworks scene
+        self.add_animation("outro", 20, self.proc_fireworks)
+    def stop_fireworks_scene(self):
         self.stop_animation("outro")
     def proc_fireworks(self, a):
+        a.time += 20
         i = random.randrange(len(BLOCK_AREAS))
         area = tuple(BLOCK_AREAS.values())[i]
-        w, h = self.levelSize
-        dest = random.randrange(-CELLSIZE, w*CELLSIZE), random.randrange(-CELLSIZE, h*CELLSIZE)
-        self.levelSurface.blit(
+        w, h = self.sceneSurface.get_size()
+        dest = random.randrange(-CELLSIZE, w), random.randrange(-CELLSIZE, h)
+        self.sceneSurface.blit(
             self.blocksSurface, 
             dest = dest, 
             area = area
         )
+        self.updateWindow = True
+    
+    def switch_level(self, firstLevel = False, nextLevel = False):
+        if firstLevel:
+            self.practiceMode = False
+            self.fullPlayTime = 0
+            self.deathCount = 0
+            self.levelIndex = 0
+        else:
+            self.practiceMode = True
+            self.levelIndex += nextLevel and 1 or len(LEVELS)-1
+            self.levelIndex %= len(LEVELS)
+        self.resetLevel = True
+        self.triggerSwitchScene = True
+        
     
     async def run_loop(self):
         
@@ -960,15 +1010,17 @@ class BlueBallGame:
             
             self.currentTime = pygame.time.get_ticks()  # in ms
             
-            timerUpdated = self.update_timer_text()
-
-            if self.reloadLevel:
-                self.reloadLevel = False
-                if self.fireworks:
-                    self.start_fireworks()
-                else:
+            if self.triggerSwitchScene:
+                self.triggerSwitchScene = False
+                self.levelOutro = False
+                self.reset_scene()
+                if self.fireworks:      # final scene: fireworks
+                    self.start_fireworks_scene()
+                else:                   # level scene
                     self.load_level()
             
+            self.updateWindow |= self.update_timer_text()
+
             # handle all events
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
@@ -977,13 +1029,12 @@ class BlueBallGame:
                     self.windowSize = e.size
                     self.update_header_font()
                     self.update_header_texts()
-                    self.redrawLevel = True  #!!! actually update the window only needed
+                    self.updateWindow = True
                 elif e.type == pygame.KEYDOWN:
                     if self.canPlay:
-                        # End the level intro
-                        if self.levelIntro:
+                        if self.levelIntro:  # key pressed - end the level intro (start animations and timer)
                             self.levelIntro = False
-                            self.levelStartTime = self.currentTime - self.spawnTime
+                            self.levelStartTime = self.currentTime - self.levelPlayTime
                             self.start_permanent_dynamics()
                         # Hero step
                         dirIndex = KEY_TO_DIRECTION.get(e.key, -1)  # => 0..3
@@ -991,34 +1042,19 @@ class BlueBallGame:
                             self.handle_hero_step(dirIndex)
                     if self.fireworks:  # allow to exit outro mode
                         self.fireworks = False
-                        self.stop_fireworks()
-                        self.practiceMode = False
-                        self.deathCount = 0
-                        self.levelIndex = 0
-                        self.switchLevel = True
-                        self.reloadLevel = True
-                    # switching level
-                    elif e.key == pygame.K_PAGEDOWN:  # next level
-                        self.levelIndex += 1
-                        self.levelIndex %= len(LEVELS)
-                        self.switchLevel = True
-                        self.reloadLevel = True
-                        self.practiceMode = True
-                    elif e.key == pygame.K_PAGEUP:  # previous level
-                        self.levelIndex += len(LEVELS)-1
-                        self.levelIndex %= len(LEVELS)
-                        self.switchLevel = True
-                        self.reloadLevel = True
-                        self.practiceMode = True
-                    elif e.key == pygame.K_HOME:    # reset game
-                        self.levelIndex = 0
-                        self.switchLevel = True
-                        self.reloadLevel = True
-                        self.practiceMode = False
-                        self.deathCount = 0
+                        self.stop_fireworks_scene()
+                        self.switch_level(firstLevel = True)
+                    else:
+                        # switching level
+                        if e.key == pygame.K_PAGEDOWN:  # next level
+                            self.switch_level(nextLevel = True)
+                        elif e.key == pygame.K_PAGEUP:  # previous level
+                            self.switch_level(nextLevel = False)
+                        elif e.key == pygame.K_HOME:    # reset game
+                            self.switch_level(firstLevel = True)
 
             if self.levelUpdated:
-                self.update_button_states()  # update button states after the hero step
+                self.update_button_states()
 
             # Process all animations (remove ended ones)
             self.process_animations()  # animation procs called here
@@ -1030,23 +1066,15 @@ class BlueBallGame:
                 self.levelUpdated = False
             
             if self.canPlay:
-                for (x,y) in self.heroPoses:
-                    if self.level[y][x] & (BITS_RAYS | BIT_DAMAGE):
-                        self.end_playing(win = False)
-                heroPos = self.heroPoses[0]
-                if heroPos == self.finishPos:
-                    self.end_playing(win = True)
-                elif heroPos in self.spawnPoses:
-                    spawnIndex = self.spawnPoses.index(heroPos)
-                    if self.spawnIndex != spawnIndex:
-                        self.spawnIndex = spawnIndex  # save new pos to respawn
-                        self.spawnTime  = self.currentTime - self.levelStartTime
+                self.check_hero_position()
 
-            updateWindow = self.redrawLevel or timerUpdated or self.fireworks
             if self.redrawLevel:
-                self.redraw_level()
                 self.redrawLevel = False
-            if updateWindow:
+                self.redraw_level()
+                self.updateWindow = True
+                
+            if self.updateWindow:
+                self.updateWindow = False
                 self.update_window()
             
             await asyncio.sleep(0)

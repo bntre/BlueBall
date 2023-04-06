@@ -499,7 +499,7 @@ W   W   W   W   W   W   W   W   W   W   W   W
         ("i1", "S10A2S00", 500),
         ("j1", "S10A2S00", 500),
         ("k1", "S10A2S00", 500),
-        ("mnm", " S10W/S12S11W/ S10W/ S10W/ S10W/S12S11W/ S10A3/ S10W/ S10W/S12S11W/ S10W/ S10W/ S10W/S12S11W/", 1500)
+        ("mn", " S10W/S12S11W/ S10W/ S10W/ S10W/S12S11W/ S10A3/ S10W/ S10W/S12S11W/ S10W/ S10W/ S10W/S12S11W/", 1500)
     ]
 },
 
