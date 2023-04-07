@@ -629,5 +629,66 @@ W   W   W   W   W   W   W   W   W   W   W   W   W   W
 """,
 },
 
+{   'id': "3.10",
+    'name': "??",
+    'map': """
+V       V   V   V   V   V           V   
+V       V   V   V   V   V       V       
+    V   W   S00 F   D   V       V   H   
+    V       V       V   W   W   W       
+    V       V                           
+W   V   W   W   W       W   W   W   W   
+""",
+},
+
+{   'id': "3.11",
+    'name': "??",
+    'map': """
+        Pa  L3  S00 D       H   
+        B                       
+            V                   
+        V       b   c           
+        V           V           
+        F       V               
+""",
+    'buttons': [
+        ("a", "bc", "S12S11A1", 100),
+    ]
+},
+
+{   'id': "3.12",
+    'name': "??",
+    'map': """
+W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   L3                      L3  j   k   
+W   W   W   W   W   W   Pa  W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   l   m                               
+W   W   W   W   W   W   B   W   b               W   W   W   W   W   W   W   W   W   W                                       
+    S33                 V   S31 c                           T01 T10     S30 W   e   W       B           V                   
+    S34         V           S32                                             W       W                                   S10 
+H   S35                                         S20         T06 T11             d   *                               F       
+            S22     V           W   S25 S22     W                       S10 W   W   W               W                   p   
+            S21                     S24 S21                     S20         W   W   L0              n   o               q   
+W   W   W   W   W   W   S00 g   f   S23 W   W   W   W   W   W   W   W   W   W   W   L0                                  S10 
+W   W   W   W   W   W   S10 W   W   W   W   W   W   W   W   W   W   W   W   W   W   W                   W               S10 
+W   W   W   W   W   W       W   W   W   W   W   W   W   W   W   W   W   W   W   W   W                                   S10 
+S31                 S33             S30 S31 S30     S30     T09 T16         W       W                                   S10 
+S32                 S34                 S32                             S10 W       W                                   S10 
+D                   S35                         S20         T00 T19         V                                           S10 
+    i                       S22 S22 S22 S22     W                           W   W   W                                       
+S20 h   S20                 S21 S21 S21 S21                 S20             W   W   W                                       
+W       W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   L2                                  
+""",
+    'dynamics': [
+        ("bc", "A7WWA7/S31S31S30S31/S32S32 S32", 1000),
+        ("fg", "L2", 1000),
+        ("hi", "S20/A7", 800),
+        ("jk", "L3", 800),
+        ("lm", "A3//////////////A3", 1000),
+        ("no", "J2/J3", 1000),
+        ("pq", "L1", 1000),
+    ],
+    'buttons': [
+        ("a", "de", "A5////////A5", 200),
+    ]
+},
 
 ] # end of LEVELS

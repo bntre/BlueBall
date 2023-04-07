@@ -8,9 +8,9 @@ import pygame
 
 from   levels import LEVELS
 
-LEVEL_ID_TO_START = "3.8"  # play custom level
 LEVEL_ID_TO_START = 0       # "temp" level for debugging
 LEVEL_ID_TO_START = "1.1"   # normal start
+LEVEL_ID_TO_START = "3.12"  # play custom level
 
 USE_SOUNDS = True
 
@@ -146,7 +146,7 @@ A7  A5  A4  A6  T0  T1  T3  T2
 A2  A0  A1  A3  C0  C1  C2  C3  
 J2  J1  J3  J0  C4  C5  C6  C7  
 J6  J5  J7  J4  C8  C9  CA  CB  
-R1  R0  R2  R3  P               
+R1  R0  R2  R3  P   E0  E1
 """)
 
 #-----------------------------------------------------
@@ -164,6 +164,13 @@ KEY_TO_DIRECTION = {  # key => index of DIRECTIONS
     pygame.K_UP:     2,
     pygame.K_DOWN:   3,
 }
+
+ANY_KEY = (  # used e.g. to finish level intro
+    pygame.K_RIGHT, pygame.K_LEFT, pygame.K_UP, pygame.K_DOWN,
+    pygame.K_PAGEDOWN, pygame.K_PAGEUP, pygame.K_HOME, pygame.K_END,
+    pygame.K_RETURN, pygame.K_SPACE, pygame.K_ESCAPE, pygame.K_KP_ENTER,
+)
+
 
 #-----------------------------------------------------
 
@@ -249,8 +256,7 @@ class BlueBallGame:
         self.currentTime    = pygame.time.get_ticks()  # updated in main loop
 
         self.practiceMode   = False
-        self.canPlay        = False
-        self.fireworks      = False  # to show congratulations scene when all levels done
+        self.fireworks      = False  # set when all levels won - show fireworks on next scene switch
         self.deathCount     = 0
         self.fullPlayTime   = 0  # time spent on all levels; shown on fireworks
 
@@ -263,6 +269,7 @@ class BlueBallGame:
                 self.levelIndex = i
                 break
         
+        self.levelPhase     = -1  # 0 - intro, 1 - play, 2 - outro, -1 - not a level scene
         self.levelPlayTime  = 0   # set on starting level outro (e.g. diyng for respawn) and on level reset
         self.levelStartTime = -1  # set on ending level intro; used for running the timer
         
@@ -319,7 +326,7 @@ class BlueBallGame:
             buttons.append((
                 aliasToPos[buttonAlias],
                 tuple(aliasToPos[a] for a in aliases),
-                [re.findall(r'[ A-Z][0-9]?', r) for r in blockNames.split("/")],  # 2D list of block names
+                [re.findall(r'[ A-Z][0-9]*', r) for r in blockNames.split("/")],  # 2D list of block names
                 stepDelay
             ))
         
@@ -405,14 +412,13 @@ class BlueBallGame:
 
         self.levelUpdated   = True  # recalculate lazer ray bits etc
         self.redrawLevel    = True
-        #!!! next three might be a level state variable
-        self.canPlay        = True  # False on level ending (when just waiting for final animations end)
-        self.levelIntro     = True  # playing paused until player pushes a key
-        self.levelOutro     = False
-    
+        
         self.update_header_texts()
         
+        self.levelPhase = 0  # intro
+                
         if USE_SOUNDS:
+            pygame.mixer.Sound.stop(self.soundStart)
             pygame.mixer.Sound.play(self.soundStart)
         
         
@@ -580,11 +586,17 @@ class BlueBallGame:
         
         self.blit_header_texts()
         
-        W, H = self.windowSize
         w, h = self.sceneSurface.get_size()
+        W, H = self.windowSize
         hh   = self.headerHeight
-        k = min(W // w, (H - hh) // h)
-        self.windowSurface.blit(pygame.transform.scale(self.sceneSurface, (w*k, h*k)), (0, hh))
+        H -= hh
+        #k = min(W // w, H // h)
+        k = min(W / w, H / h)  # allow to stretch
+        w *= k
+        h *= k
+        l = (W - w) // 2
+        t = (H - h) // 2
+        self.windowSurface.blit(pygame.transform.scale(self.sceneSurface, (w, h)), (l, hh + t))
         
         pygame.display.update()
 
@@ -759,7 +771,7 @@ class BlueBallGame:
                 self.level[y][x] &= ~BITS_BOX        # erase the box
                 self.level[y][x] |=  BIT_BOX_BROKEN  # single bit only
             # check the hero is here
-            elif self.canPlay and (x,y) in self.heroPoses:
+            elif self.levelPhase == 1 and (x,y) in self.heroPoses:
                 self.end_playing(win = False)
         else:
             # collect items to move (player, boxes,..)
@@ -770,7 +782,7 @@ class BlueBallGame:
             while p:
                 (x,y) = p
                 bits = self.level[y][x]
-                if self.canPlay and p in self.heroPoses:  # a hero
+                if self.levelPhase == 1 and p in self.heroPoses:  # a hero
                     items.append((p, [i for (i,h) in enumerate(self.heroPoses) if h == p]))
                 elif bits & BIT_BOX:  # a box
                     items.append((p, [-1]))
@@ -802,7 +814,7 @@ class BlueBallGame:
                         self.level[y][x] &= ~BITS_BOX
                         self.level[y][x] |=  BIT_BOX_BROKEN
                     elif i >= 0:
-                        if self.canPlay:
+                        if self.levelPhase == 1:
                             self.end_playing(win = False)
         (x,y) = dyn.currentPos
         self.level[y][x] |= dyn.propertyBits
@@ -833,48 +845,54 @@ class BlueBallGame:
         return (newPos, dirIndex, bits, teleported)
 
 
-    def handle_hero_step(self, dirIndex):
+    def handle_hero_step(self, dirIndex_):
         
         for i in range(len(self.heroPoses)):
+            dirIndex = dirIndex_
+            moved = False
         
             newPos, dirIndex, bits, teleported = self.get_next_cell(self.heroPoses[i], dirIndex)
-            if newPos is None: continue
-            
-            if not bits & BIT_SOLID or \
-                   bits & BIT_DOUBLE_WALL and i >= 1:  # allow the double to step into the "double wall"
-                self.heroPoses[i] = newPos
-                self.levelUpdated = True  # button may be pushed
-                self.redrawLevel = True
+            if newPos:
                 
-                if USE_SOUNDS:
-                    if teleported:
-                        pygame.mixer.Sound.play(self.soundTeleport)
-            
-            elif bits & BIT_BOX:  # box. can we move it?
-                newPos2, dirIndex2, bits2, _ = self.get_next_cell(newPos, dirIndex)
-                if newPos2 is None: continue
-                
-                if not bits2 & BIT_SOLID:  # we can move the box
-                    #!!! bug: if here is a double that can't move!
-                    (x, y ) = newPos
-                    (x2,y2) = newPos2
-                    self.level[y ][x ] &= ~BITS_BOX
-                    self.level[y2][x2] |=  BITS_BOX
+                if not bits & BIT_SOLID or \
+                       bits & BIT_DOUBLE_WALL and i >= 1:  # allow the double to step into the "double wall"
                     self.heroPoses[i] = newPos
-                    self.levelUpdated = True
+                    self.levelUpdated = True  # button may be pushed
                     self.redrawLevel = True
-                    self.start_pushing_box_animation()
+                    moved = True
                     
                     if USE_SOUNDS:
-                        pygame.mixer.Sound.play(self.soundBox)
                         if teleported:
                             pygame.mixer.Sound.play(self.soundTeleport)
+                
+                elif bits & BIT_BOX:  # box. can we move it?
+                    newPos2, dirIndex2, bits2, _ = self.get_next_cell(newPos, dirIndex)
+                    if newPos2 is None: continue
+                    
+                    if not bits2 & BIT_SOLID:  # we can move the box
+                        #!!! bug: if here is a double that can't move!
+                        (x, y ) = newPos
+                        (x2,y2) = newPos2
+                        self.level[y ][x ] &= ~BITS_BOX
+                        self.level[y2][x2] |=  BITS_BOX
+                        self.heroPoses[i] = newPos
+                        self.levelUpdated = True
+                        self.redrawLevel = True
+                        self.start_pushing_box_animation()
+                        moved = True
+                        
+                        if USE_SOUNDS:
+                            pygame.mixer.Sound.play(self.soundBox)
+                            if teleported:
+                                pygame.mixer.Sound.play(self.soundTeleport)
+            
+            if not moved and i == 0:  # forbid moving doubles if hero can't
+                return
         
     
     def end_playing(self, win):
-        if not self.canPlay: return  # already ended
-        self.canPlay = False  # player can't play, but wait for some animations end
-        self.levelOutro = True
+        if self.levelPhase == 2: return  # already ended
+        self.levelPhase = 2  # player can't play, but wait for some animations end
         self.levelPlayTime = self.currentTime - self.levelStartTime
         if win:
             #print("=== YOU WIN ===")
@@ -891,8 +909,8 @@ class BlueBallGame:
             self.resetLevel = True
             
             # last level won? - fireworks!
-            #!!!if self.levelIndex == 0 and not self.practiceMode:
-            if self.levelIndex == 0:
+            if self.levelIndex == 0 and not self.practiceMode:
+            #if self.levelIndex == 0:
                 self.fireworks = True
                 self.levelPlayTime = self.fullPlayTime  # full time will be shown as stopped timer
             
@@ -927,15 +945,15 @@ class BlueBallGame:
     def update_deaths_text(self):
         self.textSurfaces[1] = self.headerFont.render("D: %d" % self.deathCount, True, 0x7F7F7Fff)
     def update_timer_text(self):
-        run = False
-        if self.levelIntro:
-            run, col = False, 0  # 0 - gray, 1 - green (win), 2 - red (lose)
-        elif self.canPlay:
-            run, col = True, 0  # gray
-        elif self.fireworks and not self.levelOutro:
-            run, col = False, 1  # green
-        else:
+        run, col = False, 0
+        if self.levelPhase == 0:    # intro
+            run, col = False, 0     #   0 - gray, 1 - green (win), 2 - red (lose)
+        elif self.levelPhase == 1:  # play
+            run, col = True, 0      #   gray
+        elif self.levelPhase == 2:  # outro
             run, col = False, self.resetLevel and 1 or 2
+        elif self.fireworks:        # fireworks
+            run, col = False, 1     #   green
         #
         if run:
             time = (self.currentTime - self.levelStartTime) // 100
@@ -970,10 +988,10 @@ class BlueBallGame:
             return shift
     
     def start_fireworks_scene(self):
+        self.levelPhase = -1
         self.sceneSurface = pygame.surface.Surface((100, 100))  
         self.sceneSurface.fill('black')
         self.update_header_texts()
-        self.levelStartTime = self.currentTime  # we use level timer for fireworks scene
         self.add_animation("outro", 20, self.proc_fireworks)
     def stop_fireworks_scene(self):
         self.stop_animation("outro")
@@ -990,15 +1008,15 @@ class BlueBallGame:
         )
         self.updateWindow = True
     
-    def switch_level(self, firstLevel = False, nextLevel = False):
+    def switch_level(self, firstLevel = False, shiftLevel = 0):
         if firstLevel:
             self.practiceMode = False
             self.fullPlayTime = 0
             self.deathCount = 0
             self.levelIndex = 0
-        else:
+        elif shiftLevel != 0:
             self.practiceMode = True
-            self.levelIndex += nextLevel and 1 or len(LEVELS)-1
+            self.levelIndex += len(LEVELS) + shiftLevel
             self.levelIndex %= len(LEVELS)
         self.resetLevel = True
         self.triggerSwitchScene = True
@@ -1012,7 +1030,6 @@ class BlueBallGame:
             
             if self.triggerSwitchScene:
                 self.triggerSwitchScene = False
-                self.levelOutro = False
                 self.reset_scene()
                 if self.fireworks:      # final scene: fireworks
                     self.start_fireworks_scene()
@@ -1023,6 +1040,8 @@ class BlueBallGame:
 
             # handle all events
             for e in pygame.event.get():
+                buttonPushed = False
+                dirIndex = -1
                 if e.type == pygame.QUIT:
                     return
                 elif e.type == pygame.VIDEORESIZE:
@@ -1030,28 +1049,39 @@ class BlueBallGame:
                     self.update_header_font()
                     self.update_header_texts()
                     self.updateWindow = True
+                elif e.type == pygame.MOUSEBUTTONDOWN:
+                    buttonPushed = True
+                    #dirIndex <-- event.pos
                 elif e.type == pygame.KEYDOWN:
-                    if self.canPlay:
-                        if self.levelIntro:  # key pressed - end the level intro (start animations and timer)
-                            self.levelIntro = False
-                            self.levelStartTime = self.currentTime - self.levelPlayTime
-                            self.start_permanent_dynamics()
-                        # Hero step
-                        dirIndex = KEY_TO_DIRECTION.get(e.key, -1)  # => 0..3
-                        if dirIndex != -1:
-                            self.handle_hero_step(dirIndex)
-                    if self.fireworks:  # allow to exit outro mode
-                        self.fireworks = False
-                        self.stop_fireworks_scene()
-                        self.switch_level(firstLevel = True)
-                    else:
-                        # switching level
-                        if e.key == pygame.K_PAGEDOWN:  # next level
-                            self.switch_level(nextLevel = True)
-                        elif e.key == pygame.K_PAGEUP:  # previous level
-                            self.switch_level(nextLevel = False)
-                        elif e.key == pygame.K_HOME:    # reset game
+                    buttonPushed = e.key in ANY_KEY
+                    dirIndex = KEY_TO_DIRECTION.get(e.key, -1)  # => 0..3
+                    # switching level
+                    if buttonPushed:
+                        if self.fireworks:  # allow to exit fireworks scene
+                            self.fireworks = False
+                            self.stop_fireworks_scene()
                             self.switch_level(firstLevel = True)
+                        elif e.key == pygame.K_HOME:      # reset game
+                            self.switch_level(firstLevel = True)
+                        elif e.key == pygame.K_END:       # reset level
+                            self.switch_level(shiftLevel = 0)
+                        elif e.key == pygame.K_PAGEDOWN:  # next level
+                            self.switch_level(shiftLevel = 1)
+                        elif e.key == pygame.K_PAGEUP:    # previous level
+                            self.switch_level(shiftLevel = -1)
+                        if self.triggerSwitchScene:
+                            continue  # skip other handling
+                if buttonPushed:
+                    if self.levelPhase == 0:  # key pressed - end level intro (start animations and timer)
+                        self.levelPhase = 1
+                        self.levelStartTime = self.currentTime - self.levelPlayTime
+                        self.start_permanent_dynamics()
+                    if self.levelPhase == 1:
+                        if dirIndex != -1:  # Hero step
+                            self.handle_hero_step(dirIndex)
+
+            if self.triggerSwitchScene:
+                continue  # skip other handling
 
             if self.levelUpdated:
                 self.update_button_states()
@@ -1065,7 +1095,7 @@ class BlueBallGame:
                 #self.update_button_states()  # here update them again: after animations ?
                 self.levelUpdated = False
             
-            if self.canPlay:
+            if self.levelPhase == 1:
                 self.check_hero_position()
 
             if self.redrawLevel:
