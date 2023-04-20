@@ -1,6 +1,3 @@
-#!!! TODO:
-#   control with mouse for mobile
-
 import re, random
 from   collections import defaultdict
 import asyncio
@@ -8,9 +5,10 @@ import pygame
 
 from   levels import LEVELS
 
+LEVELS = LEVELS[1:]         # delete temp level
 LEVEL_ID_TO_START = 0       # "temp" level for debugging
+LEVEL_ID_TO_START = "3.5"   # play custom level
 LEVEL_ID_TO_START = "1.1"   # normal start
-LEVEL_ID_TO_START = "3.12"  # play custom level
 
 USE_SOUNDS = True
 
@@ -244,6 +242,7 @@ class BlueBallGame:
             self.soundTeleport   = load_sound("Pickup_03.ogg")
             self.soundButton1    = load_sound("Menu_Navigate_00.ogg")
             self.soundButton0    = load_sound("Menu_Navigate_03.ogg")
+            self.soundFireworks  = load_sound("Jingle_Achievement_01.ogg")
         
         self.windowSize     = self.windowSurface.get_size()
         
@@ -911,6 +910,7 @@ class BlueBallGame:
             # last level won? - fireworks!
             if self.levelIndex == 0 and not self.practiceMode:
             #if self.levelIndex == 0:
+            #if True:
                 self.fireworks = True
                 self.levelPlayTime = self.fullPlayTime  # full time will be shown as stopped timer
             
@@ -993,6 +993,8 @@ class BlueBallGame:
         self.sceneSurface.fill('black')
         self.update_header_texts()
         self.add_animation("outro", 20, self.proc_fireworks)
+        if USE_SOUNDS:
+            pygame.mixer.Sound.play(self.soundFireworks, loops = 2)  # play 3 times
     def stop_fireworks_scene(self):
         self.stop_animation("outro")
     def proc_fireworks(self, a):
@@ -1020,7 +1022,16 @@ class BlueBallGame:
             self.levelIndex %= len(LEVELS)
         self.resetLevel = True
         self.triggerSwitchScene = True
-        
+    
+    def get_click_direction(self, pos):
+        cx, cy = pos
+        w, h = self.windowSize
+        x = cx - w // 2
+        y = cy - h // 2
+        if abs(x) > abs(y):
+            return x < 0 and 1 or 0
+        else:
+            return y < 0 and 2 or 3
     
     async def run_loop(self):
         
@@ -1051,7 +1062,7 @@ class BlueBallGame:
                     self.updateWindow = True
                 elif e.type == pygame.MOUSEBUTTONDOWN:
                     buttonPushed = True
-                    #dirIndex <-- event.pos
+                    dirIndex = self.get_click_direction(e.pos)  # => 0..3
                 elif e.type == pygame.KEYDOWN:
                     buttonPushed = e.key in ANY_KEY
                     dirIndex = KEY_TO_DIRECTION.get(e.key, -1)  # => 0..3

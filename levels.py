@@ -1,6 +1,7 @@
 
 LEVELS = [
 
+# Debug level - deleted on startup
 {   'id': 0,
     'name': "temp",
     'map': """
@@ -147,6 +148,7 @@ W   W   W   W   W   W   W   W   W   W   W
 },
 
 {   'id': "1.8",
+    'name': "Jogging",
     'map': """
 W   W   W   F   W   W
 L0      a           W
@@ -165,6 +167,7 @@ W   W   W   W   H   W
 },
 
 {   'id': "1.9",
+    'name': "Toughie",
     'map': """
 W   W   W   F   W   W   W       L3                  W   
 W   W   W       W   W   W                           W   
@@ -190,6 +193,7 @@ W   W   W   W   W   W   W   W   W   W   W   W   H   W
 },
 
 {   'id': "1.10",
+    'name': "Jogging 2",
     'map': """
 W   W   L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  L3  W   W   
 W                                                                                                               F   W   
@@ -208,6 +212,7 @@ W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   
 },
 
 {   'id': "1.11",
+    'name': "Look at this",
     'map': """
     a               b   W       G           c   
 f                       G       J3              
@@ -231,6 +236,7 @@ F               G   G   W   W   W   W   W
 },
 
 {   'id': "1.12",
+    'name': "Jogging 3",
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   L3  W   
 W                                           a   W   
@@ -279,6 +285,7 @@ W   W   W   W   W   W   W   W   W   W   W   W   W
 # Episode 2
 
 {   'id': "2.1",
+    'name': "The button",
     'map': """
 W   W   W   W   W   W   
 W               F   W   
@@ -293,6 +300,7 @@ W   W   W   W   W   W
 },
 
 {   'id': "2.2",
+    'name': "Three buttons",
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   W   
 W   F   W   W   W   W   W   Pd  W   W   H   W   
@@ -311,6 +319,7 @@ W   W   W   W   W   i   W   W   c   W   W   W
 },
 
 {   'id': "2.3",
+    'name': "Spike",
     'map': """
 W   W   W   W   W   W   
 W   W           F   W   
@@ -328,6 +337,7 @@ W   W   W   W   W   W
 },
 
 {   'id': "2.4",
+    'name': "Black pocket",
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   W   W   
 W   b   c       Pa                              W   
@@ -343,6 +353,7 @@ W   W   W   W   W   W   W   W   W   W   W   W   W
 },
 
 {   'id': "2.5",
+    'name': "Caves",
     'map': """
 W   W   W   W   W   W   W   W   W   W   
 W   a   W   c   W   e   W   g   W   H   
@@ -370,6 +381,7 @@ W   W       W   W   W   W   W   W   W
 },
 
 {   'id': "2.6",
+    'name': "Circle",
     'map': """
     F   S12 S11 W       W   S00         
     S20         S30     S30     S22     
@@ -387,6 +399,7 @@ d   c       S10 W
 },
 
 {   'id': "2.7",
+    'name': "Waves",
     'map': """
 W   W   W   W   W   W   W   W   W   W   
 W               H                   W   
@@ -427,6 +440,7 @@ S21 S20             F           S20 S21
 },
 
 {   'id': "2.8",
+    'name': "Teleport",
     'map': """
 W   W   W   W   W   W   W   W
 W           T19              
@@ -438,6 +452,7 @@ W   W   W   W   W   W   W   W
 },
 
 {   'id': "2.9",
+    'name': "Four rooms",
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   W   
 W                   W   F       c   W       W   
@@ -463,6 +478,7 @@ W   W   W   W   W   W   W   W   W   W   W   W
 },
 
 {   'id': "2.10",
+    'name': "Down and up",
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   W   
 W           H           W   F               W   
@@ -504,6 +520,7 @@ W   W   W   W   W   W   W   W   W   W   W   W
 },
 
 {   'id': "2.11",
+    'name': "Labyrinth",
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W
 W   H           W                                                   W   
@@ -527,6 +544,7 @@ W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W
 },
 
 {   'id': "2.12",
+    'name': "Nether",
     'map': """
 W   T2B W   W   W   W   W   W   W       W       W   W           *       p           T0A
 W   i                                   S30     S30 W       W   W   W   q           W
@@ -567,7 +585,79 @@ W   T3B W   W   W   W   W   W   W   W   W   W   W   W       S20             S20 
 #---------------------------------------------------------
 # Episode 3
 
+{   'id': "3.1",
+    'name': "The double",
+    'map': """
+W   W   W   W
+W       F   W
+W   H       W
+W   W   W   W
+W           W
+W   D       W
+W   W   W   W
+""",
+},
+
+{   'id': "3.2",
+    'name': "The double in danger",
+    'map': """
+W   W   W   W
+W   D   S30 W
+W           W
+W   W   W   W
+W   H       W
+W       F   W
+W   W   W   W
+""",
+},
+
+{   'id': "3.3",
+    'name': "Hero in danger",
+    'map': """
+W   W   W   W   W   W   L3  W   W   
+W   W   W   W   W   W   a   b   W   
+W       D   W   W       H   W   W   
+W       Pc      W               W   
+W               W           F   W
+W   W   W   W   W   W   W   W   W   
+""",
+    'buttons': [
+        ("c", "ab", "A1", 500)
+    ]
+},
+
+{   'id': "3.4",
+    'name': "Elevator",
+    'map': """
+W   D   Pa          W   
+W   W   W       S20 W   
+W   W   W   W   W   W   
+W   W   W       F   W   
+W   H       b       W
+W   W   W   c   W   W
+""",
+    'buttons': [
+        ("a", "bc", "A6", 100)
+    ]
+},
+
+{   'id': "3.5",
+    'name': "Double pass",
+    'map': """
+W   W   W   W   W   W   W   W   W   W
+W                       S30 W   S31 W
+W           W   S00             S32 W
+W   S00                         D   W
+W   W   W   L3  W   W   W   W   W   W
+W   F   S30                 S30     W
+W           W                       W
+W                       S20     H   W
+W   W   W   W   W   W   W   W   W   W
+""",
+},
+
 {   'id': "3.6",
+    'name': "Frame",
     'map': """
 W   W   W   W   W   W   W   W   W   W   
 W   L3                      L1      W   
@@ -582,6 +672,7 @@ W   W   W   W   W   W   W   W   W   W
 },
 
 {   'id': "3.7",
+    'name': "Don't be afraid",
     'map': """
 W   W   W   W   W
 T11 a   b       W
@@ -590,7 +681,7 @@ W               W
 W               W
 W   Pc      D   W
 W               L1
-W   F   T01     W
+W       T01 F   W
 W               W
 W   W   W   W   W
 """,
@@ -600,10 +691,12 @@ W   W   W   W   W
 },
 
 {   'id': "3.8",
+    'name': "The face",
     'map': """
 W   W   W   W   W   W   W   W   W   
 T15     D   T06 W   T16     D   T05 
 T11     S20 T02 W   T12         T01 
+W   W   W   W       W   W   W   W   
 W   W   W   W   W   W   W   W   W   
 W   T10         H           T00 W   
 W   W   F                   W   W   
@@ -612,6 +705,7 @@ W   W   W   W   W   W   W   W   W
 },
 
 {   'id': "3.9",
+    'name': "Quadruple pass",
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   W   W   W
 T15             S31 H   T06 T10         S30     D   T01
@@ -630,7 +724,7 @@ W   W   W   W   W   W   W   W   W   W   W   W   W   W
 },
 
 {   'id': "3.10",
-    'name': "??",
+    'name': "We are not welcome",
     'map': """
 V       V   V   V   V   V           V   
 V       V   V   V   V   V       V       
@@ -642,7 +736,7 @@ W   V   W   W   W       W   W   W   W
 },
 
 {   'id': "3.11",
-    'name': "??",
+    'name': "Side by side",
     'map': """
         Pa  L3  S00 D       H   
         B                       
@@ -657,7 +751,7 @@ W   V   W   W   W       W   W   W   W
 },
 
 {   'id': "3.12",
-    'name': "??",
+    'name': "Hardcore",
     'map': """
 W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   L3                      L3  j   k   
 W   W   W   W   W   W   Pa  W   W   W   W   W   W   W   W   W   W   W   W   W   W   W   l   m                               
