@@ -1,3 +1,18 @@
+"""
+Blue Ball
+pygame
+
+Control keys:
+    Arrows, WASD - move
+    End, L - restart the level
+    Home, R - restart the game
+    Page Down/Up, J/K - switch the level for practice
+
+These sources: https://github.com/bntre/BlueBall
+Playable:      https://bntr.itch.io/blueball
+"""
+
+
 import re, random
 from   collections import defaultdict
 import asyncio
@@ -161,12 +176,16 @@ KEY_TO_DIRECTION = {  # key => index of DIRECTIONS
     pygame.K_LEFT:   1,
     pygame.K_UP:     2,
     pygame.K_DOWN:   3,
+    pygame.K_d:      0,
+    pygame.K_a:      1,
+    pygame.K_w:      2,
+    pygame.K_s:      3,
 }
 
-ANY_KEY = (  # used e.g. to finish level intro
-    pygame.K_RIGHT, pygame.K_LEFT, pygame.K_UP, pygame.K_DOWN,
+ANY_KEY = tuple(KEY_TO_DIRECTION.keys()) + (  # used e.g. to finish level intro
     pygame.K_PAGEDOWN, pygame.K_PAGEUP, pygame.K_HOME, pygame.K_END,
     pygame.K_RETURN, pygame.K_SPACE, pygame.K_ESCAPE, pygame.K_KP_ENTER,
+    pygame.K_r, pygame.K_j, pygame.K_k, pygame.K_l,
 )
 
 
@@ -1072,13 +1091,13 @@ class BlueBallGame:
                             self.fireworks = False
                             self.stop_fireworks_scene()
                             self.switch_level(firstLevel = True)
-                        elif e.key == pygame.K_HOME:      # reset game
+                        elif e.key in (pygame.K_r, pygame.K_HOME):      # reset game
                             self.switch_level(firstLevel = True)
-                        elif e.key == pygame.K_END:       # reset level
+                        elif e.key in (pygame.K_l, pygame.K_END):       # reset level
                             self.switch_level(shiftLevel = 0)
-                        elif e.key == pygame.K_PAGEDOWN:  # next level
+                        elif e.key in (pygame.K_j, pygame.K_PAGEDOWN):  # next level
                             self.switch_level(shiftLevel = 1)
-                        elif e.key == pygame.K_PAGEUP:    # previous level
+                        elif e.key in (pygame.K_k, pygame.K_PAGEUP):    # previous level
                             self.switch_level(shiftLevel = -1)
                         if self.triggerSwitchScene:
                             continue  # skip other handling
