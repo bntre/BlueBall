@@ -1,3 +1,39 @@
+r"""
+
+Level map coding:
+    W       Wall
+    B       Box
+    Ln      Laser (direction)
+    G       Glass
+    Jn      Glass Laser (direction)
+    H       Hero
+    F       Finish
+    *       Checkpoint
+    An      Arrow (index)
+    Snn     Spike (index1, index2)
+    P       Push-button
+    D       Double
+    Tnn     Teleport (direction, color)
+    
+    Lowercase letter - alias for a cell (for setting dynamics)
+
+
+Permanent dynamics:
+    (<animation path cells>, <moving blocks>, <frame delay in ms>, [optional phase])
+        animation path cells        e.g. "abcb"
+        moving blocks               e.g. "A5/A6" ("/" for next row)
+    E.g.:
+        'dynamics': [
+            ("ab", "A2A0A0A1", 750)
+
+
+Button dynamics:
+    (<button cell>, <animation path cells>, <moving blocks>, <frame delay in ms>)
+    E.g.:
+        'buttons': [
+            ("a", "bc", "A1S00", 100),
+
+"""
 
 LEVELS = [
 
@@ -92,7 +128,7 @@ L4                  F
 """ },
 
 {   'id': "1.5", 
-    'name': "Walk in a circle",
+    'name': "Star",
     'map': """
 L7                      L3                  H   L5  
             B               B                       
